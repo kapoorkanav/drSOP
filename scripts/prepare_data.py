@@ -78,6 +78,13 @@ def main():
     df = pd.read_csv(dcfg["raw_labels_csv"])
     print(f"Raw: {len(df)} images, {df.patient_id.nunique()} patients.")
 
+    # Coerce numeric fields up front: comma-decimals (Brazilian locale, e.g. "10,00") get
+    # parsed correctly, and anything genuinely unparseable (data-entry typos etc.) becomes NaN
+    # here so it's caught by the same complete-metadata filter as truly missing values below,
+    # instead of surfacing as a crash later during stats fitting or training.
+    for field in dcfg["numeric_fields"]:
+        df[field] = df[field].apply(parse_locale_number)
+
     metadata_fields = dcfg["numeric_fields"] + dcfg["categorical_fields"]
     report_missingness(df, metadata_fields + [label_col])
 

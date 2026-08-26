@@ -7,7 +7,9 @@ def tokenize_comorbidities(text) -> list:
 
 def parse_locale_number(value) -> float:
     """Parses a number that may use ',' as the decimal separator (BRSET is Brazilian-locale
-    data, e.g. diabetes_time_y values like "10,00"). Returns NaN if unparseable/missing."""
+    data, e.g. diabetes_time_y values like "10,00"). Returns NaN for anything unparseable --
+    missing, empty, or a data-entry typo (e.g. "1O" with a letter O) -- rather than raising, so
+    such rows get caught by the complete-metadata filter instead of crashing the pipeline."""
     if value is None:
         return float("nan")
     if isinstance(value, (int, float)):
@@ -18,4 +20,8 @@ def parse_locale_number(value) -> float:
     try:
         return float(text)
     except ValueError:
+        pass
+    try:
         return float(text.replace(",", "."))
+    except ValueError:
+        return float("nan")
