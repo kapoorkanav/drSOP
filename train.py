@@ -152,15 +152,22 @@ def main():
         val_metrics = run_epoch(model, val_loader, device, criterion)
         print(f"[epoch {epoch}] train: {train_metrics} | val: {val_metrics}")
 
+        if val_metrics["qwk"] > best_qwk:
+            best_qwk = val_metrics["qwk"]
+            patience_left = tcfg["early_stopping_patience"]
+            improved = True
+        else:
+            improved = False
+
+        # Built after the best_qwk update above, so this field always reflects the true
+        # current best -- not the pre-update value from before this epoch's comparison.
         ckpt = {
             "model": trainable_state_dict(model), "optimizer": optimizer.state_dict(),
             "epoch": epoch, "best_qwk": best_qwk, "config": cfg,
         }
         torch.save(ckpt, output_dir / "last.pt")
 
-        if val_metrics["qwk"] > best_qwk:
-            best_qwk = val_metrics["qwk"]
-            patience_left = tcfg["early_stopping_patience"]
+        if improved:
             torch.save(ckpt, output_dir / "best.pt")
             with open(output_dir / "best_metrics.json", "w") as f:
                 json.dump(val_metrics, f, indent=2)
