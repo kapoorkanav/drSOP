@@ -27,7 +27,10 @@ class RetfoundEncoder(nn.Module):
             drop_path_rate=0.0,
             global_pool=True,
         )
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        # weights_only=False: PyTorch >=2.6 defaults to weights_only=True, which rejects this
+        # checkpoint (it has an argparse.Namespace of the original authors' training args
+        # pickled inside). Safe here since the checkpoint is from the official RETFound release.
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         checkpoint_model = checkpoint["model"]
         # Match the key naming used by the current RETFound_MAE loading code (main_finetune.py) --
         # older checkpoints/code used different key names for these.
