@@ -1,12 +1,13 @@
 data:
-  raw_labels_csv: data/labels.csv
-  images_dir: data/fundus_photos
+  # Points directly at the shared mount -- no local copy, /home doesn't have room for it.
+  raw_labels_csv: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/labels_brset.csv
+  images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
   processed_dir: data/processed
   image_size: 224
   label_col: DR_ICDR              # stage 2: severity grade (0-4)
   binary_label_col: diabetic_retinopathy  # stage 1: DR present/absent (0/1)
-  numeric_fields: [patient_age, diabetes_time]
-  categorical_fields: [patient_sex, insulin_use]
+  numeric_fields: [patient_age, diabetes_time_y]
+  categorical_fields: [patient_sex, insuline]
   comorbidity_field: comorbidities
   comorbidity_vocab_size: 15
   split:
