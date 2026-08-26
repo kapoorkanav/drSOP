@@ -122,7 +122,7 @@ def main():
 
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
-    scaler = torch.cuda.amp.GradScaler() if (tcfg["amp"] and device.type == "cuda") else None
+    scaler = torch.amp.GradScaler("cuda") if (tcfg["amp"] and device.type == "cuda") else None
 
     output_dir = Path(tcfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,10 @@
 import json
+import math
 from pathlib import Path
 
 import torch
 
-from drsop.data.text import tokenize_comorbidities
+from drsop.data.text import parse_locale_number, tokenize_comorbidities
 
 
 class MetadataProcessor:
@@ -38,8 +39,8 @@ class MetadataProcessor:
         numeric = []
         for field in self.numeric_fields:
             mean, std = self.stats["numeric"][field]["mean"], self.stats["numeric"][field]["std"]
-            val = row.get(field)
-            val = float(val) if val is not None and str(val) != "nan" else mean
+            val = parse_locale_number(row.get(field))
+            val = val if not math.isnan(val) else mean
             numeric.append((val - mean) / std)
 
         categorical = []

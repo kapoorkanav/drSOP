@@ -20,7 +20,7 @@ from sklearn.model_selection import GroupShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
-from drsop.data.text import tokenize_comorbidities  # noqa: E402
+from drsop.data.text import parse_locale_number, tokenize_comorbidities  # noqa: E402
 
 
 def split_patients(df: pd.DataFrame, val_frac: float, test_frac: float, seed: int):
@@ -57,7 +57,7 @@ def build_comorbidity_vocab(train_df: pd.DataFrame, field: str, vocab_size: int)
 def fit_metadata_stats(train_df: pd.DataFrame, numeric_fields: list, categorical_fields: list) -> dict:
     stats = {"numeric": {}, "categorical": {}}
     for field in numeric_fields:
-        vals = pd.to_numeric(train_df[field], errors="coerce")
+        vals = train_df[field].apply(parse_locale_number)
         stats["numeric"][field] = {"mean": float(vals.mean()), "std": float(vals.std() or 1.0)}
     for field in categorical_fields:
         cats = sorted(train_df[field].dropna().astype(str).unique().tolist())
