@@ -29,6 +29,12 @@ class RetfoundEncoder(nn.Module):
         )
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         checkpoint_model = checkpoint["model"]
+        # Match the key naming used by the current RETFound_MAE loading code (main_finetune.py) --
+        # older checkpoints/code used different key names for these.
+        checkpoint_model = {k.replace("backbone.", ""): v for k, v in checkpoint_model.items()}
+        checkpoint_model = {k.replace("mlp.w12.", "mlp.fc1."): v for k, v in checkpoint_model.items()}
+        checkpoint_model = {k.replace("mlp.w3.", "mlp.fc2."): v for k, v in checkpoint_model.items()}
+
         state_dict = self.backbone.state_dict()
         for k in ("head.weight", "head.bias"):
             if k in checkpoint_model and checkpoint_model[k].shape != state_dict.get(k, torch.empty(0)).shape:
@@ -36,6 +42,20 @@ class RetfoundEncoder(nn.Module):
         interpolate_pos_embed(self.backbone, checkpoint_model)
         missing, unexpected = self.backbone.load_state_dict(checkpoint_model, strict=False)
         print(f"[RetfoundEncoder] missing={len(missing)} unexpected={len(unexpected)} keys on load")
+        if missing:
+            print(f"[RetfoundEncoder] missing keys (first 10): {missing[:10]}")
+        if unexpected:
+            print(f"[RetfoundEncoder] unexpected keys (first 10): {unexpected[:10]}")
+        # Only head.weight/head.bias (deleted above, num_classes=0) should ever be legitimately
+        # missing. Anything more means the checkpoint's keys didn't match the model -- most of
+        # the pretrained weights silently failed to load (strict=False doesn't raise on this).
+        unexpected_missing = [k for k in missing if k not in ("head.weight", "head.bias")]
+        if unexpected_missing:
+            raise RuntimeError(
+                f"RetfoundEncoder: {len(unexpected_missing)} unexpected missing keys after loading "
+                f"the checkpoint -- pretrained weights likely did NOT load correctly. "
+                f"First few: {unexpected_missing[:10]}"
+            )
 
         embed_dim = self.backbone.embed_dim if hasattr(self.backbone, "embed_dim") else 1024
         self.proj = nn.Linear(embed_dim, proj_dim)

@@ -17,7 +17,7 @@ data:
 model:
   retfound_repo: third_party/RETFound_MAE
   retfound_checkpoint: weights/RETFound_cfp_weights.pth
-  retfound_arch: vit_large_patch16
+  retfound_arch: RETFound_mae
   freeze_retfound: true
   proj_dim: 512
   meta_encoder:
