@@ -49,10 +49,17 @@ class RetfoundEncoder(nn.Module):
             print(f"[RetfoundEncoder] missing keys (first 10): {missing[:10]}")
         if unexpected:
             print(f"[RetfoundEncoder] unexpected keys (first 10): {unexpected[:10]}")
-        # Only head.weight/head.bias (deleted above, num_classes=0) should ever be legitimately
-        # missing. Anything more means the checkpoint's keys didn't match the model -- most of
-        # the pretrained weights silently failed to load (strict=False doesn't raise on this).
-        unexpected_missing = [k for k in missing if k not in ("head.weight", "head.bias")]
+        # Only head.weight/head.bias (deleted above, num_classes=0) and fc_norm.weight/bias
+        # should ever be legitimately missing. fc_norm is the post-global-pool LayerNorm used
+        # when global_pool=True; it never existed during MAE pretraining (which only used the
+        # CLS-token `norm`), so it's always freshly initialized on every RETFound fine-tune --
+        # not specific to us. It stays at PyTorch's default LayerNorm init (weight=1, bias=0,
+        # i.e. plain normalization, not noise), and the trainable `proj` layer right after it
+        # can absorb any scale/shift it needs anyway. Anything beyond these four keys missing
+        # means the checkpoint's keys didn't actually match the model -- most of the pretrained
+        # weights silently failed to load (strict=False doesn't raise on this by itself).
+        expected_missing = ("head.weight", "head.bias", "fc_norm.weight", "fc_norm.bias")
+        unexpected_missing = [k for k in missing if k not in expected_missing]
         if unexpected_missing:
             raise RuntimeError(
                 f"RetfoundEncoder: {len(unexpected_missing)} unexpected missing keys after loading "
