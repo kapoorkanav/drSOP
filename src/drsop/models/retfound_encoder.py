@@ -82,6 +82,10 @@ class RetfoundEncoder(nn.Module):
                 feats = self.backbone.forward_features(images)
         else:
             feats = self.backbone.forward_features(images)
+        # This RETFound_MAE version's forward_features uses mean(dim=1, keepdim=True) when
+        # global_pool=True, returning [B, 1, embed_dim] instead of [B, embed_dim].
+        if feats.dim() == 3:
+            feats = feats.squeeze(1)
         return self.proj(feats)
 
     def train(self, mode: bool = True):
