@@ -75,14 +75,25 @@ python evaluate.py --config configs/lora.yaml --checkpoint runs/exp1_lora/best.p
 
 ## Results so far
 
-Frozen-RETFound baseline (`configs/default.yaml`, ~1,551 images after the complete-metadata
-filter): best val QWK 0.8354 (epoch 33), **test QWK 0.7043**, test accuracy 0.58, macro-F1 0.44.
-Confusion matrix shows the model is strong at the extremes (grade 0 "no DR" and grade 4 "most
-severe", which also has the most training examples among the non-zero grades) and weak in the
-sparse middle grades (1-3), especially grade 3 (only 19 training examples). Mean learned `alpha`
-was 0.55 — the gate ends up leaning slightly toward the image embedding but genuinely blends both
-modalities rather than collapsing to one, which is the core hypothesis this architecture was built
-to test.
+Both runs use the same split: 1,551 images (809 patients) after the complete-metadata filter --
+1,078 train / 237 val / 236 test images (566/121/122 patients), patient-level split.
+
+| | Frozen RETFound (`configs/default.yaml`) | LoRA fine-tuned (`configs/lora.yaml`) |
+|---|---|---|
+| Best val QWK | 0.8354 (epoch 33) | 0.9128 (epoch 13) |
+| Test QWK | 0.7043 | **0.8351** |
+| Test accuracy | 0.58 | 0.74 |
+| Test macro-F1 | 0.44 | 0.56 |
+| Mean learned alpha | 0.55 | 0.53 |
+
+LoRA (r=8, adapters on every attention/MLP linear + fully-trainable `fc_norm`, base weights frozen,
+~1% of backbone params trainable) meaningfully beat the frozen baseline on the held-out test set,
+not just validation -- per-grade accuracy improved from 61%->77% (grade 0), 44%->68% (grade 2), and
+70%->93% (grade 4). Grade 3 stayed weak in both (only 19 training examples) -- adapting image
+features doesn't fix a class that's fundamentally data-starved, so that's the next thing to address
+(oversampling/augmentation) rather than more fine-tuning. Mean `alpha` stayed ~0.5 in both runs --
+the gate consistently blends both modalities rather than collapsing to one, which was the core
+hypothesis this architecture was built to test, and it held even as the image branch got better.
 
 ## Notes / open items
 
