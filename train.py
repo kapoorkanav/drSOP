@@ -24,6 +24,13 @@ from drsop.metrics import compute_metrics  # noqa: E402
 from drsop.models.fusion_model import DRFusionModel  # noqa: E402
 
 
+def trainable_state_dict(model: torch.nn.Module) -> dict:
+    """Excludes the frozen RETFound backbone (~1.2GB of unchanging weights) from checkpoints --
+    it gets reloaded fresh from the original RETFound checkpoint on every model construction
+    anyway, so saving it every epoch is pure wasted disk I/O."""
+    return {k: v for k, v in model.state_dict().items() if not k.startswith("image_encoder.backbone.")}
+
+
 def set_seed(seed: int):
     import random
     import numpy as np
@@ -131,7 +138,10 @@ def main():
     best_qwk, patience_left = -1.0, tcfg["early_stopping_patience"]
     if args.resume:
         ckpt = torch.load(args.resume, map_location=device)
-        model.load_state_dict(ckpt["model"])
+        # strict=False: checkpoints only contain trainable params (frozen RETFound backbone is
+        # excluded, see trainable_state_dict below) -- it gets reloaded fresh from the original
+        # RETFound checkpoint during model construction above, so this is expected, not an error.
+        model.load_state_dict(ckpt["model"], strict=False)
         optimizer.load_state_dict(ckpt["optimizer"])
         start_epoch = ckpt["epoch"] + 1
         best_qwk = ckpt["best_qwk"]
@@ -143,7 +153,7 @@ def main():
         print(f"[epoch {epoch}] train: {train_metrics} | val: {val_metrics}")
 
         ckpt = {
-            "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+            "model": trainable_state_dict(model), "optimizer": optimizer.state_dict(),
             "epoch": epoch, "best_qwk": best_qwk, "config": cfg,
         }
         torch.save(ckpt, output_dir / "last.pt")
