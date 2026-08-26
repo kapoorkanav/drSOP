@@ -40,7 +40,10 @@ model:
   num_classes: 5  # ICDR grade 0-4
 
 train:
-  batch_size: 32
+  # Much smaller than the frozen-baseline config's 32 -- LoRA needs gradients to flow through
+  # the whole backbone, so activation memory scales like full fine-tuning even though only
+  # ~1% of params are trainable. Lower this further (e.g. 4) if this still OOMs on your GPU.
+  batch_size: 8
   epochs: 50
   lr: 1.0e-4
   weight_decay: 1.0e-4
