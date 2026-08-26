@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+/data/
+/weights/
+/third_party/
+/runs/
+.DS_Store

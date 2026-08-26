@@ -1,0 +1,50 @@
+data:
+  raw_labels_csv: data/labels.csv
+  images_dir: data/fundus_photos
+  processed_dir: data/processed
+  image_size: 224
+  label_col: DR_ICDR              # stage 2: severity grade (0-4)
+  binary_label_col: diabetic_retinopathy  # stage 1: DR present/absent (0/1)
+  numeric_fields: [patient_age, diabetes_time]
+  categorical_fields: [patient_sex, insulin_use]
+  comorbidity_field: comorbidities
+  comorbidity_vocab_size: 15
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: vit_large_patch16
+  freeze_retfound: true
+  proj_dim: 512
+  meta_encoder:
+    d_model: 128
+    n_layers: 2
+    n_heads: 4
+    dropout: 0.1
+  gate:
+    n_layers: 1
+    n_heads: 4
+    dropout: 0.1
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes:
+    stage1: 2  # DR present/absent
+    stage2: 5  # ICDR grade 0-4
+
+train:
+  batch_size: 32
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  warmup_epochs: 2
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/exp1
+  seed: 42
+  early_stopping_patience: 10
