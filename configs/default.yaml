@@ -4,8 +4,7 @@ data:
   images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
   processed_dir: data/processed
   image_size: 224
-  label_col: DR_ICDR              # stage 2: severity grade (0-4)
-  binary_label_col: diabetic_retinopathy  # stage 1: DR present/absent (0/1)
+  label_col: DR_ICDR              # ICDR severity grade (0-4)
   numeric_fields: [patient_age, diabetes_time_y]
   categorical_fields: [patient_sex, insuline]
   comorbidity_field: comorbidities
@@ -33,16 +32,13 @@ model:
   head:
     hidden_dims: [256, 64]
     dropout: 0.3
-  num_classes:
-    stage1: 2  # DR present/absent
-    stage2: 5  # ICDR grade 0-4
+  num_classes: 5  # ICDR grade 0-4
 
 train:
   batch_size: 32
   epochs: 50
   lr: 1.0e-4
   weight_decay: 1.0e-4
-  warmup_epochs: 2
   class_weighted_loss: true
   num_workers: 8
   amp: true

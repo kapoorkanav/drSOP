@@ -1,22 +1,13 @@
 """
-Complete-metadata patient-level split + preprocessing for the two-stage BRSET pipeline.
+Complete-metadata patient-level split + preprocessing for the BRSET severity-grading pipeline.
 
 Run once before training:
     python scripts/prepare_data.py --config configs/default.yaml
 
-Stage 1 (binary): DR present/absent (`data.binary_label_col`), trained on the larger cohort.
-Stage 2 (severity): ICDR grade 0-4 (`data.label_col`), trained on the subset that also has a grade.
-
-Both stages are carved out of ONE global patient-level train/val/test split (computed once, over
-all complete-metadata rows regardless of label), so a given patient always falls in the same split
-for both stages -- this also guarantees both eyes of a patient always land in the same split, since
-the split groups by patient_id.
-
 Produces, under data.processed_dir:
-    {train,val,test}_stage1.csv     (rows with a non-null binary_label_col)
-    {train,val,test}_stage2.csv     (rows with a non-null label_col)
-    comorbidity_vocab.json          (top-K free-text tokens found in the stage1 train split)
-    metadata_stats.json             (numeric field mean/std + categorical vocabs, fit on stage1 train)
+    train.csv, val.csv, test.csv    (rows with complete metadata and a non-null label_col)
+    comorbidity_vocab.json          (top-K free-text tokens found in the training split)
+    metadata_stats.json             (numeric field mean/std + categorical vocabs, fit on train only)
 """
 import argparse
 import json
@@ -74,12 +65,6 @@ def fit_metadata_stats(train_df: pd.DataFrame, numeric_fields: list, categorical
     return stats
 
 
-def stage_view(split_df: pd.DataFrame, label_col: str) -> pd.DataFrame:
-    view = split_df.dropna(subset=[label_col]).copy()
-    view[label_col] = view[label_col].astype(int)
-    return view
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -88,51 +73,44 @@ def main():
     root = Path(__file__).resolve().parents[1]
     cfg = resolve(load_config(args.config), root)
     dcfg = cfg["data"]
+    label_col = dcfg["label_col"]
 
     df = pd.read_csv(dcfg["raw_labels_csv"])
     print(f"Raw: {len(df)} images, {df.patient_id.nunique()} patients.")
 
     metadata_fields = dcfg["numeric_fields"] + dcfg["categorical_fields"]
-    report_missingness(df, metadata_fields + [dcfg["binary_label_col"], dcfg["label_col"]])
+    report_missingness(df, metadata_fields + [label_col])
 
-    # Complete-case filter: every downstream row (both stages) has full metadata.
     before = len(df)
-    df = df.dropna(subset=metadata_fields)
-    print(f"Complete-metadata filter: dropped {before - len(df)} of {before} rows "
+    df = df.dropna(subset=metadata_fields + [label_col])
+    df[label_col] = df[label_col].astype(int)
+    print(f"Complete-metadata + labeled filter: dropped {before - len(df)} of {before} rows "
           f"({len(df)} remain, {df.patient_id.nunique()} patients).")
 
-    # One global patient-level split over the complete-metadata cohort. Both stages are
-    # label-filtered VIEWS of this same split, so a patient's split assignment never
-    # differs between stage 1 and stage 2, and both eyes always share a split.
     train_df, val_df, test_df = split_patients(
         df, dcfg["split"]["val_frac"], dcfg["split"]["test_frac"], dcfg["split"]["seed"]
     )
+    print(f"Split sizes (images): train={len(train_df)} val={len(val_df)} test={len(test_df)}")
+    print(f"Split sizes (patients): train={train_df.patient_id.nunique()} "
+          f"val={val_df.patient_id.nunique()} test={test_df.patient_id.nunique()}")
+    print(f"Train label distribution ({label_col}): "
+          f"{train_df[label_col].value_counts().sort_index().to_dict()}")
+
+    vocab = build_comorbidity_vocab(train_df, dcfg["comorbidity_field"], dcfg["comorbidity_vocab_size"])
+    print(f"Comorbidity vocab (top {len(vocab)} tokens from train): {vocab}")
+    stats = fit_metadata_stats(train_df, dcfg["numeric_fields"], dcfg["categorical_fields"])
 
     out_dir = Path(dcfg["processed_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    stage_cols = {"stage1": dcfg["binary_label_col"], "stage2": dcfg["label_col"]}
-    splits = {"train": train_df, "val": val_df, "test": test_df}
-    for stage_name, label_col in stage_cols.items():
-        print(f"\n{stage_name} (label={label_col}):")
-        for split_name, split_df in splits.items():
-            view = stage_view(split_df, label_col)
-            view.to_csv(out_dir / f"{split_name}_{stage_name}.csv", index=False)
-            print(f"  {split_name}: {len(view)} images, {view.patient_id.nunique()} patients")
-
-    # Fit metadata artifacts on stage1's train view: it's the broadest train pool, and
-    # stage2's train patients are a strict subset of it (same global train split).
-    stage1_train = stage_view(train_df, dcfg["binary_label_col"])
-    vocab = build_comorbidity_vocab(stage1_train, dcfg["comorbidity_field"], dcfg["comorbidity_vocab_size"])
-    print(f"\nComorbidity vocab (top {len(vocab)} tokens from stage1 train): {vocab}")
-    stats = fit_metadata_stats(stage1_train, dcfg["numeric_fields"], dcfg["categorical_fields"])
-
+    train_df.to_csv(out_dir / "train.csv", index=False)
+    val_df.to_csv(out_dir / "val.csv", index=False)
+    test_df.to_csv(out_dir / "test.csv", index=False)
     with open(out_dir / "comorbidity_vocab.json", "w") as f:
         json.dump(vocab, f, indent=2)
     with open(out_dir / "metadata_stats.json", "w") as f:
         json.dump(stats, f, indent=2)
 
-    print(f"\nWrote processed splits + metadata artifacts to {out_dir}")
+    print(f"Wrote processed splits + metadata artifacts to {out_dir}")
 
 
 if __name__ == "__main__":

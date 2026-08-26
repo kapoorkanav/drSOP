@@ -1,15 +1,11 @@
 """
-Train the RETFound + metadata gated-fusion model, one stage at a time.
+Train the RETFound + metadata gated-fusion DR severity grading model.
 
-    python train.py --config configs/default.yaml --stage 1   # DR present/absent
-    python train.py --config configs/default.yaml --stage 2   # ICDR severity grade, on the graded subset
+    python train.py --config configs/default.yaml
 
-Expects scripts/prepare_data.py to have already been run (produces
-data/processed/{train,val,test}_stage{1,2}.csv plus metadata_stats.json / comorbidity_vocab.json),
-and RETFound_MAE cloned + checkpoint downloaded per README.md.
-
-The two stages are independent models (separate weights, separate output dirs) -- this is a POC,
-not a shared-backbone cascade. Stage 2 does not depend on stage 1 having been trained.
+Expects scripts/prepare_data.py to have already been run (produces data/processed/{train,val,test}.csv
+plus metadata_stats.json / comorbidity_vocab.json), and RETFound_MAE cloned + checkpoint downloaded
+per README.md.
 """
 import argparse
 import json
@@ -72,17 +68,14 @@ def run_epoch(model, loader, device, criterion, optimizer=None, scaler=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--stage", type=int, required=True, choices=[1, 2])
     parser.add_argument("--resume", default=None)
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
     cfg = resolve(load_config(args.config), root)
     dcfg, mcfg, tcfg = cfg["data"], cfg["model"], cfg["train"]
-
-    stage_tag = f"stage{args.stage}"
-    label_col = dcfg["binary_label_col"] if args.stage == 1 else dcfg["label_col"]
-    num_classes = mcfg["num_classes"][stage_tag]
+    label_col = dcfg["label_col"]
+    num_classes = mcfg["num_classes"]
 
     set_seed(tcfg["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -99,7 +92,7 @@ def main():
 
     def make_loader(split: str, train: bool):
         ds = BRSETDataset(
-            split_csv=str(Path(processed_dir) / f"{split}_{stage_tag}.csv"),
+            split_csv=str(Path(processed_dir) / f"{split}.csv"),
             images_dir=dcfg["images_dir"],
             metadata=metadata,
             label_col=label_col,
@@ -131,7 +124,7 @@ def main():
     optimizer = torch.optim.AdamW(trainable, lr=tcfg["lr"], weight_decay=tcfg["weight_decay"])
     scaler = torch.cuda.amp.GradScaler() if (tcfg["amp"] and device.type == "cuda") else None
 
-    output_dir = Path(tcfg["output_dir"]) / stage_tag
+    output_dir = Path(tcfg["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
     start_epoch = 0
