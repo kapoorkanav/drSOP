@@ -25,10 +25,15 @@ from drsop.models.fusion_model import DRFusionModel  # noqa: E402
 
 
 def trainable_state_dict(model: torch.nn.Module) -> dict:
-    """Excludes the frozen RETFound backbone (~1.2GB of unchanging weights) from checkpoints --
-    it gets reloaded fresh from the original RETFound checkpoint on every model construction
-    anyway, so saving it every epoch is pure wasted disk I/O."""
-    return {k: v for k, v in model.state_dict().items() if not k.startswith("image_encoder.backbone.")}
+    """Only the currently-trainable parameters. Excludes whatever's frozen right now -- the
+    entire RETFound backbone (~1.2GB) when fully frozen, or just its frozen base weights when
+    using LoRA (the injected adapter matrices + fc_norm stay, since those ARE trainable there).
+    Frozen weights get reloaded fresh from the original RETFound checkpoint on every model
+    construction anyway, so saving them every epoch would be pure wasted disk I/O. Filters by
+    requires_grad rather than a hardcoded key prefix so this stays correct across fine-tuning
+    modes instead of silently dropping LoRA weights the way a "backbone.*" prefix filter would."""
+    trainable_names = {name for name, p in model.named_parameters() if p.requires_grad}
+    return {k: v for k, v in model.state_dict().items() if k in trainable_names}
 
 
 def set_seed(seed: int):

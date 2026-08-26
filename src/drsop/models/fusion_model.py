@@ -12,12 +12,17 @@ class DRFusionModel(nn.Module):
                  categorical_cardinalities: list, n_numeric: int, n_comorbidities: int,
                  proj_dim: int, num_classes: int):
         super().__init__()
+        lora_cfg = retfound_cfg.get("lora", {})
         self.image_encoder = RetfoundEncoder(
             repo_path=retfound_cfg["retfound_repo"],
             checkpoint_path=retfound_cfg["retfound_checkpoint"],
             arch=retfound_cfg["retfound_arch"],
             proj_dim=proj_dim,
             freeze=retfound_cfg["freeze_retfound"],
+            use_lora=retfound_cfg.get("use_lora", False),
+            lora_r=lora_cfg.get("r", 8),
+            lora_alpha=lora_cfg.get("alpha", 16),
+            lora_dropout=lora_cfg.get("dropout", 0.1),
         )
         self.meta_encoder = MetadataEncoder(
             n_numeric=n_numeric,

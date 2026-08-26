@@ -1,6 +1,7 @@
 torch>=2.1
 torchvision>=0.16
 timm==0.4.12
+peft>=0.10
 numpy
 pandas
 scikit-learn

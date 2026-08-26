@@ -40,7 +40,8 @@ older timm API — don't upgrade it without checking compatibility.
 
 ```bash
 python scripts/prepare_data.py --config configs/default.yaml   # one-time: split + metadata stats
-python train.py --config configs/default.yaml                  # trains, checkpoints to runs/exp1/
+python train.py --config configs/default.yaml                  # frozen RETFound baseline -> runs/exp1/
+python evaluate.py --config configs/default.yaml --checkpoint runs/exp1/best.pt   # honest test-set numbers
 ```
 
 `prepare_data.py` fits comorbidity vocab + numeric normalization stats on the train split only
@@ -48,14 +49,40 @@ python train.py --config configs/default.yaml                  # trains, checkpo
 per-field missingness, the final image/patient counts, and the train label distribution — check
 that output for class imbalance before training.
 
+**LoRA fine-tuning variant**: `configs/lora.yaml` reuses the same processed data/stats but sets
+`model.use_lora: true` — RETFound's base weights stay frozen, but LoRA adapters get injected into
+every attention/MLP linear (`blocks.*.attn.{qkv,proj}`, `blocks.*.mlp.{fc1,fc2}`) plus `fc_norm`
+becomes fully trainable (it was never pretrained regardless of fine-tuning mode, see the note
+below). Same architecture code path (`RetfoundEncoder(use_lora=...)`), separate config and
+`output_dir: runs/exp1_lora/` so it never overwrites the frozen-baseline checkpoints:
+
+```bash
+python train.py --config configs/lora.yaml
+python evaluate.py --config configs/lora.yaml --checkpoint runs/exp1_lora/best.pt
+```
+
 ## Repo layout
 
-- `configs/default.yaml` — all hyperparameters.
+- `configs/default.yaml` — frozen-RETFound baseline hyperparameters. `configs/lora.yaml` — same,
+  with LoRA enabled and its own `output_dir`.
 - `scripts/prepare_data.py` — complete-metadata filter, patient-level split, metadata preprocessing.
 - `src/drsop/data/` — `MetadataProcessor`, `BRSETDataset`.
-- `src/drsop/models/` — `RetfoundEncoder` (frozen ViT-L), `MetadataEncoder`, `GateTransformer`,
-  `MLPHead`, wired together in `fusion_model.DRFusionModel`.
+- `src/drsop/models/` — `RetfoundEncoder` (frozen ViT-L, or LoRA-adapted via `use_lora=True`),
+  `MetadataEncoder`, `GateTransformer`, `MLPHead`, wired together in `fusion_model.DRFusionModel`.
 - `train.py` — training loop, AMP, early stopping on validation quadratic weighted kappa (QWK).
+- `evaluate.py` — loads a checkpoint, reports QWK/accuracy/macro-F1 + confusion matrix + mean
+  learned `alpha` on any split (defaults to test).
+
+## Results so far
+
+Frozen-RETFound baseline (`configs/default.yaml`, ~1,551 images after the complete-metadata
+filter): best val QWK 0.8354 (epoch 33), **test QWK 0.7043**, test accuracy 0.58, macro-F1 0.44.
+Confusion matrix shows the model is strong at the extremes (grade 0 "no DR" and grade 4 "most
+severe", which also has the most training examples among the non-zero grades) and weak in the
+sparse middle grades (1-3), especially grade 3 (only 19 training examples). Mean learned `alpha`
+was 0.55 — the gate ends up leaning slightly toward the image embedding but genuinely blends both
+modalities rather than collapsing to one, which is the core hypothesis this architecture was built
+to test.
 
 ## Notes / open items
 
@@ -64,9 +91,10 @@ that output for class imbalance before training.
   field and keeps the top-K most frequent tokens from the training split as multi-hot flags
   (`configs/default.yaml: data.comorbidity_vocab_size`). Inspect the printed vocab after running
   `prepare_data.py` — if it's noisy, tighten the tokenizer in `src/drsop/data/text.py`.
-- RETFound is frozen by default (`model.freeze_retfound: true`). If validation QWK plateaus,
-  the next step is unfreezing the last few ViT blocks or adding LoRA adapters — not full
-  fine-tuning first, given the dataset is only ~1-2k images after the complete-metadata filter.
 - With only ~1k training images, watch for overfitting on the metadata/gate/head (the only
-  trainable parts) — consider raising `head.dropout` or lowering `meta_encoder`/`gate` capacity
-  if train/val metrics diverge early.
+  trainable parts in the frozen-baseline config) — consider raising `head.dropout` or lowering
+  `meta_encoder`/`gate` capacity if train/val metrics diverge early.
+- The middle severity grades (1-3) are the weakest part of the frozen baseline, purely from having
+  few training examples (54/108/19 respectively) — LoRA fine-tuning may or may not help this
+  specifically (it adapts image features, not class balance), so also worth considering targeted
+  augmentation or oversampling for those grades if LoRA alone doesn't move the needle.

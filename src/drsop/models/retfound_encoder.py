@@ -14,7 +14,8 @@ class RetfoundEncoder(nn.Module):
     """
 
     def __init__(self, repo_path: str, checkpoint_path: str, arch: str,
-                 proj_dim: int, freeze: bool = True):
+                 proj_dim: int, freeze: bool = True, use_lora: bool = False,
+                 lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.1):
         super().__init__()
         repo_path = str(Path(repo_path).resolve())
         if repo_path not in sys.path:
@@ -71,17 +72,40 @@ class RetfoundEncoder(nn.Module):
         self.proj = nn.Linear(embed_dim, proj_dim)
 
         self.freeze = freeze
-        if freeze:
+        self.use_lora = use_lora
+        if use_lora:
+            # LoRA: base weights stay frozen (get_peft_model does this automatically), only
+            # small adapter matrices injected into attention/MLP linears become trainable --
+            # plus fc_norm via modules_to_save, since it was never pretrained anyway (see the
+            # comment above on expected_missing) and there's no pretrained value to preserve.
+            # freeze_retfound is ignored in this branch: LoRA always keeps the base frozen.
+            from peft import LoraConfig, get_peft_model
+            lora_config = LoraConfig(
+                r=lora_r, lora_alpha=lora_alpha, lora_dropout=lora_dropout,
+                # Matches blocks.<i>.attn.{qkv,proj} and blocks.<i>.mlp.{fc1,fc2} only --
+                # explicitly NOT patch_embed.proj (a Conv2d; plain LoRA only supports Linear).
+                target_modules=r"^blocks\.\d+\.(attn\.(qkv|proj)|mlp\.(fc1|fc2))$",
+                modules_to_save=["fc_norm"],
+                bias="none",
+            )
+            self.backbone = get_peft_model(self.backbone, lora_config)
+            self.backbone.print_trainable_parameters()
+        elif freeze:
             for p in self.backbone.parameters():
                 p.requires_grad_(False)
             self.backbone.eval()
+        # else: freeze=False, use_lora=False -> full fine-tune, all backbone params trainable.
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        if self.freeze:
+        # get_peft_model wraps self.backbone in a PeftModel; get_base_model() is peft's public,
+        # version-stable way back to the original module for calling custom methods like
+        # forward_features (which peft doesn't know about and doesn't proxy reliably).
+        vit = self.backbone.get_base_model() if self.use_lora else self.backbone
+        if self.freeze and not self.use_lora:
             with torch.no_grad():
-                feats = self.backbone.forward_features(images)
+                feats = vit.forward_features(images)
         else:
-            feats = self.backbone.forward_features(images)
+            feats = vit.forward_features(images)
         # This RETFound_MAE version's forward_features uses mean(dim=1, keepdim=True) when
         # global_pool=True, returning [B, 1, embed_dim] instead of [B, embed_dim].
         if feats.dim() == 3:
@@ -90,6 +114,6 @@ class RetfoundEncoder(nn.Module):
 
     def train(self, mode: bool = True):
         super().train(mode)
-        if self.freeze:
-            self.backbone.eval()  # keep frozen backbone (BatchNorm/dropout) in eval mode always
+        if self.freeze and not self.use_lora:
+            self.backbone.eval()  # keep fully-frozen backbone (dropout etc) in eval mode always
         return self
