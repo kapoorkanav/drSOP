@@ -5,6 +5,12 @@ complete-metadata patients. If so, a model trained on missingness patterns could
 learn "fields missing -> predict grade 0" as a shortcut instead of reading the image.
 
     python scripts/check_missingness_bias.py --config configs/default.yaml
+    python scripts/check_missingness_bias.py --config configs/default.yaml --diabetic-only
+
+--diabetic-only restricts to diabetes=="yes" first. The full-cohort run found a severe
+confound (missingness ~= "not diabetic" ~= "can't have DR"). This flag tests whether that
+confound is specifically about diabetic-vs-not, or whether it persists even within diabetics
+(in which case it's a narrower charting-completeness signal, safer to use missing-tokens for).
 """
 import argparse
 import sys
@@ -21,6 +27,8 @@ from drsop.data.text import parse_locale_number  # noqa: E402
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--diabetic-only", action="store_true",
+                         help='Restrict to diabetes=="yes" before comparing.')
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parents[1]
@@ -35,6 +43,11 @@ def main():
     metadata_fields = dcfg["numeric_fields"] + dcfg["categorical_fields"]
     df = df.dropna(subset=[label_col])  # only rows we could ever train on either way
     df[label_col] = df[label_col].astype(int)
+
+    if args.diabetic_only:
+        before = len(df)
+        df = df[df["diabetes"].astype(str).str.lower() == "yes"]
+        print(f"--diabetic-only: kept {len(df)} of {before} rows where diabetes==\"yes\"\n")
 
     is_complete = df[metadata_fields].notna().all(axis=1)
     complete_df, incomplete_df = df[is_complete], df[~is_complete]
