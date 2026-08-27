@@ -5,6 +5,7 @@ peft>=0.10
 numpy
 pandas
 scikit-learn
+scipy
 pyyaml
 pillow
 tqdm
