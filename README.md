@@ -14,9 +14,11 @@ iterations of this repo instead dropped any row with incomplete metadata; that a
 preserved separately (see "Reproducing the earlier complete-metadata-only experiments" below) for
 comparison, since it's what the current best (LoRA) results were measured on.
 
-Note: as of this writing, `MetadataProcessor` still mean-imputes missing numbers and uses a
-generic "unseen" bucket for missing categories, rather than a dedicated learned missing-token
-embedding per field — that's the actual next piece of model work, not yet built.
+Missing values get an explicit, learned "missing" embedding rather than an imputed/faked value:
+numeric fields (age, diabetes duration) and comorbidities each have a dedicated learned "unknown"
+vector that replaces the token entirely when absent; categorical fields (sex, insulin use) get
+this for free via their reserved unseen/missing embedding-table index. The model can tell "we
+don't know this patient's age" apart from "this patient is average age."
 
 (Earlier iteration of this repo split into two stages — DR present/absent, then severity — on the
 assumption that severity grading was only available for a smaller subset. On the real data both

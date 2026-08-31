@@ -36,7 +36,10 @@ class DRFusionModel(nn.Module):
 
     def forward(self, batch: dict, return_alpha: bool = False):
         image_emb = self.image_encoder(batch["image"])
-        meta_emb = self.meta_encoder(batch["numeric"], batch["categorical"], batch["comorbidity"])
+        meta_emb = self.meta_encoder(
+            batch["numeric"], batch["numeric_missing"],
+            batch["categorical"], batch["comorbidity"], batch["comorbidity_missing"],
+        )
         alpha = self.gate(image_emb, meta_emb)
         fused = alpha * image_emb + (1 - alpha) * meta_emb
         logits = self.head(fused)

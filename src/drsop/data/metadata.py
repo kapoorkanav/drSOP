@@ -36,25 +36,33 @@ class MetadataProcessor:
         return len(self.numeric_fields) + len(self.categorical_fields) + 1
 
     def transform(self, row) -> dict:
-        numeric = []
+        numeric, numeric_missing = [], []
         for field in self.numeric_fields:
             mean, std = self.stats["numeric"][field]["mean"], self.stats["numeric"][field]["std"]
             val = parse_locale_number(row.get(field))
-            val = val if not math.isnan(val) else mean
-            numeric.append((val - mean) / std)
+            is_missing = math.isnan(val)
+            # Placeholder 0.0 when missing -- never actually used for prediction, since
+            # MetadataEncoder overrides this field's whole token with a learned "missing"
+            # embedding. Kept as a real (non-NaN) number so it can pass through the numeric
+            # projection layer without polluting gradients with NaN before being overridden.
+            numeric.append(0.0 if is_missing else (val - mean) / std)
+            numeric_missing.append(1.0 if is_missing else 0.0)
 
         categorical = []
         for field in self.categorical_fields:
             vocab = self.cat_to_idx[field]
             raw = str(row.get(field))
-            categorical.append(vocab.get(raw, len(vocab)))  # unseen-category index
+            categorical.append(vocab.get(raw, len(vocab)))  # unseen/missing-category index
 
         comorbid_text = row.get(self.comorbidity_field)
+        comorbidity_missing = not isinstance(comorbid_text, str)  # true NaN, not just "no tokens found"
         tokens = set(tokenize_comorbidities(comorbid_text))
         multi_hot = [1.0 if tok in tokens else 0.0 for tok in self.comorbidity_vocab]
 
         return {
             "numeric": torch.tensor(numeric, dtype=torch.float32),
+            "numeric_missing": torch.tensor(numeric_missing, dtype=torch.float32),
             "categorical": torch.tensor(categorical, dtype=torch.long),
             "comorbidity": torch.tensor(multi_hot, dtype=torch.float32),
+            "comorbidity_missing": torch.tensor(float(comorbidity_missing), dtype=torch.float32),
         }

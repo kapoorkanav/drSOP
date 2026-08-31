@@ -36,16 +36,11 @@ def completeness_tier(row, metadata_fields: list) -> str:
     return "partial"
 
 
-def build_patient_strat_key(df: pd.DataFrame, label_col: str, metadata_fields: list,
-                             min_cell_count: int = 6) -> pd.DataFrame:
+def build_patient_strat_key(df: pd.DataFrame, label_col: str) -> pd.DataFrame:
     """One row per patient: worst (max) grade across their images, and their metadata
     completeness tier (same fields are patient-level, so consistent across a patient's
     images in practice -- take the first row's tier). Combined into one stratification
-    key so both severity AND completeness are balanced across train/val/test.
-
-    Rare (grade, tier) combinations get collapsed to grade-only, since a stratified split
-    needs multiple patients per stratum to actually work -- falling back to the coarser
-    grade-only key for those cells instead of erroring."""
+    key so both severity AND completeness are balanced across train/val/test."""
     per_patient = df.groupby("patient_id").agg(
         strat_grade=(label_col, "max"),
         strat_tier=("completeness_tier", "first"),
@@ -53,25 +48,45 @@ def build_patient_strat_key(df: pd.DataFrame, label_col: str, metadata_fields: l
     per_patient["combined_key"] = (
         per_patient["strat_grade"].astype(str) + "_" + per_patient["strat_tier"]
     )
-    cell_counts = per_patient["combined_key"].value_counts()
-    rare = cell_counts[cell_counts < min_cell_count].index
-    per_patient["strat_key"] = per_patient["combined_key"].where(
-        ~per_patient["combined_key"].isin(rare), per_patient["strat_grade"].astype(str)
-    )
+    per_patient["grade_key"] = per_patient["strat_grade"].astype(str)
     return per_patient
+
+
+def safe_strat_labels(pool: pd.DataFrame, primary_col: str, fallback_col: str,
+                       min_count: int = 2) -> pd.Series:
+    """A stratified split errors if any class has fewer than min_count members IN THE POOL
+    BEING SPLIT -- and that pool shrinks at each split stage, so a class that was safe
+    against the full dataset can become too rare against just the leftover "rest" portion.
+    Recompute this fresh right before each split call (not once upfront) against whatever
+    pool is actually being split. Collapses rare classes to a coarser fallback key, then
+    merges anything still too rare directly into the majority class -- not into a shared
+    "leftover" bucket of its own, since that bucket can itself end up too small."""
+    counts = pool[primary_col].value_counts()
+    rare = counts[counts < min_count].index
+    key = pool[primary_col].where(~pool[primary_col].isin(rare), pool[fallback_col])
+
+    counts2 = key.value_counts()
+    still_rare = counts2[counts2 < min_count].index
+    safe_classes = counts2.drop(still_rare)
+    if len(still_rare) and len(safe_classes):
+        key = key.where(~key.isin(still_rare), safe_classes.idxmax())
+    return key
 
 
 def split_patients_stratified(df: pd.DataFrame, label_col: str, metadata_fields: list,
                                val_frac: float, test_frac: float, seed: int):
-    per_patient = build_patient_strat_key(df, label_col, metadata_fields)
+    per_patient = build_patient_strat_key(df, label_col)
 
+    strat1 = safe_strat_labels(per_patient, "combined_key", "grade_key")
     sss1 = StratifiedShuffleSplit(n_splits=1, test_size=val_frac + test_frac, random_state=seed)
-    train_idx, rest_idx = next(sss1.split(per_patient, per_patient["strat_key"]))
-    train_patients, rest_patients = per_patient.iloc[train_idx], per_patient.iloc[rest_idx]
+    train_idx, rest_idx = next(sss1.split(per_patient, strat1))
+    train_patients = per_patient.iloc[train_idx]
+    rest_patients = per_patient.iloc[rest_idx].reset_index(drop=True)
 
+    strat2 = safe_strat_labels(rest_patients, "combined_key", "grade_key")
     rel_test_frac = test_frac / (val_frac + test_frac)
     sss2 = StratifiedShuffleSplit(n_splits=1, test_size=rel_test_frac, random_state=seed)
-    val_idx, test_idx = next(sss2.split(rest_patients, rest_patients["strat_key"]))
+    val_idx, test_idx = next(sss2.split(rest_patients, strat2))
     val_patients, test_patients = rest_patients.iloc[val_idx], rest_patients.iloc[test_idx]
 
     train_ids = set(train_patients.patient_id)
