@@ -1,13 +1,17 @@
 """
-Complete-metadata patient-level split + preprocessing for the BRSET severity-grading pipeline.
+Patient-level, stratified-by-(grade x metadata-completeness) split + preprocessing.
+
+Uses ALL labeled rows now, not just complete-metadata ones -- missing metadata fields
+get handled by the model (missing-token embeddings) rather than filtered out here.
 
 Run once before training:
     python scripts/prepare_data.py --config configs/default.yaml
 
 Produces, under data.processed_dir:
-    train.csv, val.csv, test.csv    (rows with complete metadata and a non-null label_col)
+    train.csv, val.csv, test.csv    (all rows with a non-null label_col)
     comorbidity_vocab.json          (top-K free-text tokens found in the training split)
-    metadata_stats.json             (numeric field mean/std + categorical vocabs, fit on train only)
+    metadata_stats.json             (numeric field mean/std + categorical vocabs, fit on
+                                      whatever's non-missing in the training split)
 """
 import argparse
 import json
@@ -16,26 +20,68 @@ from collections import Counter
 from pathlib import Path
 
 import pandas as pd
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import StratifiedShuffleSplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
 from drsop.data.text import parse_locale_number, tokenize_comorbidities  # noqa: E402
 
 
-def split_patients(df: pd.DataFrame, val_frac: float, test_frac: float, seed: int):
-    gss1 = GroupShuffleSplit(n_splits=1, test_size=val_frac + test_frac, random_state=seed)
-    train_idx, rest_idx = next(gss1.split(df, groups=df["patient_id"]))
-    train_df, rest_df = df.iloc[train_idx], df.iloc[rest_idx]
+def completeness_tier(row, metadata_fields: list) -> str:
+    n_present = sum(pd.notna(row[f]) for f in metadata_fields)
+    if n_present == len(metadata_fields):
+        return "full"
+    if n_present == 0:
+        return "none"
+    return "partial"
+
+
+def build_patient_strat_key(df: pd.DataFrame, label_col: str, metadata_fields: list,
+                             min_cell_count: int = 6) -> pd.DataFrame:
+    """One row per patient: worst (max) grade across their images, and their metadata
+    completeness tier (same fields are patient-level, so consistent across a patient's
+    images in practice -- take the first row's tier). Combined into one stratification
+    key so both severity AND completeness are balanced across train/val/test.
+
+    Rare (grade, tier) combinations get collapsed to grade-only, since a stratified split
+    needs multiple patients per stratum to actually work -- falling back to the coarser
+    grade-only key for those cells instead of erroring."""
+    per_patient = df.groupby("patient_id").agg(
+        strat_grade=(label_col, "max"),
+        strat_tier=("completeness_tier", "first"),
+    ).reset_index()
+    per_patient["combined_key"] = (
+        per_patient["strat_grade"].astype(str) + "_" + per_patient["strat_tier"]
+    )
+    cell_counts = per_patient["combined_key"].value_counts()
+    rare = cell_counts[cell_counts < min_cell_count].index
+    per_patient["strat_key"] = per_patient["combined_key"].where(
+        ~per_patient["combined_key"].isin(rare), per_patient["strat_grade"].astype(str)
+    )
+    return per_patient
+
+
+def split_patients_stratified(df: pd.DataFrame, label_col: str, metadata_fields: list,
+                               val_frac: float, test_frac: float, seed: int):
+    per_patient = build_patient_strat_key(df, label_col, metadata_fields)
+
+    sss1 = StratifiedShuffleSplit(n_splits=1, test_size=val_frac + test_frac, random_state=seed)
+    train_idx, rest_idx = next(sss1.split(per_patient, per_patient["strat_key"]))
+    train_patients, rest_patients = per_patient.iloc[train_idx], per_patient.iloc[rest_idx]
 
     rel_test_frac = test_frac / (val_frac + test_frac)
-    gss2 = GroupShuffleSplit(n_splits=1, test_size=rel_test_frac, random_state=seed)
-    val_idx, test_idx = next(gss2.split(rest_df, groups=rest_df["patient_id"]))
-    val_df, test_df = rest_df.iloc[val_idx], rest_df.iloc[test_idx]
+    sss2 = StratifiedShuffleSplit(n_splits=1, test_size=rel_test_frac, random_state=seed)
+    val_idx, test_idx = next(sss2.split(rest_patients, rest_patients["strat_key"]))
+    val_patients, test_patients = rest_patients.iloc[val_idx], rest_patients.iloc[test_idx]
 
-    assert set(train_df.patient_id) & set(val_df.patient_id) == set()
-    assert set(train_df.patient_id) & set(test_df.patient_id) == set()
-    assert set(val_df.patient_id) & set(test_df.patient_id) == set()
+    train_ids = set(train_patients.patient_id)
+    val_ids = set(val_patients.patient_id)
+    test_ids = set(test_patients.patient_id)
+    assert not (train_ids & val_ids) and not (train_ids & test_ids) and not (val_ids & test_ids)
+
+    train_df = df[df.patient_id.isin(train_ids)]
+    val_df = df[df.patient_id.isin(val_ids)]
+    test_df = df[df.patient_id.isin(test_ids)]
     return train_df, val_df, test_df
 
 
@@ -55,6 +101,8 @@ def build_comorbidity_vocab(train_df: pd.DataFrame, field: str, vocab_size: int)
 
 
 def fit_metadata_stats(train_df: pd.DataFrame, numeric_fields: list, categorical_fields: list) -> dict:
+    """Fit only on whatever's non-missing in train -- pandas' mean/std and dropna already
+    skip NaN rows automatically, so partial metadata doesn't need special handling here."""
     stats = {"numeric": {}, "categorical": {}}
     for field in numeric_fields:
         vals = train_df[field].apply(parse_locale_number)
@@ -74,34 +122,39 @@ def main():
     cfg = resolve(load_config(args.config), root)
     dcfg = cfg["data"]
     label_col = dcfg["label_col"]
+    metadata_fields = dcfg["numeric_fields"] + dcfg["categorical_fields"]
 
     df = pd.read_csv(dcfg["raw_labels_csv"])
     print(f"Raw: {len(df)} images, {df.patient_id.nunique()} patients.")
 
-    # Coerce numeric fields up front: comma-decimals (Brazilian locale, e.g. "10,00") get
-    # parsed correctly, and anything genuinely unparseable (data-entry typos etc.) becomes NaN
-    # here so it's caught by the same complete-metadata filter as truly missing values below,
-    # instead of surfacing as a crash later during stats fitting or training.
     for field in dcfg["numeric_fields"]:
         df[field] = df[field].apply(parse_locale_number)
 
-    metadata_fields = dcfg["numeric_fields"] + dcfg["categorical_fields"]
     report_missingness(df, metadata_fields + [label_col])
 
     before = len(df)
-    df = df.dropna(subset=metadata_fields + [label_col])
+    df = df.dropna(subset=[label_col])  # keep every metadata-completeness level; only the label is required
     df[label_col] = df[label_col].astype(int)
-    print(f"Complete-metadata + labeled filter: dropped {before - len(df)} of {before} rows "
+    print(f"Labeled filter: dropped {before - len(df)} of {before} rows "
           f"({len(df)} remain, {df.patient_id.nunique()} patients).")
 
-    train_df, val_df, test_df = split_patients(
-        df, dcfg["split"]["val_frac"], dcfg["split"]["test_frac"], dcfg["split"]["seed"]
+    df["completeness_tier"] = df.apply(lambda r: completeness_tier(r, metadata_fields), axis=1)
+    tier_counts = df["completeness_tier"].value_counts()
+    print(f"Metadata completeness: full={tier_counts.get('full', 0)} "
+          f"partial={tier_counts.get('partial', 0)} none={tier_counts.get('none', 0)}")
+
+    train_df, val_df, test_df = split_patients_stratified(
+        df, label_col, metadata_fields,
+        dcfg["split"]["val_frac"], dcfg["split"]["test_frac"], dcfg["split"]["seed"],
     )
     print(f"Split sizes (images): train={len(train_df)} val={len(val_df)} test={len(test_df)}")
     print(f"Split sizes (patients): train={train_df.patient_id.nunique()} "
           f"val={val_df.patient_id.nunique()} test={test_df.patient_id.nunique()}")
-    print(f"Train label distribution ({label_col}): "
-          f"{train_df[label_col].value_counts().sort_index().to_dict()}")
+    for name, split_df in [("train", train_df), ("val", val_df), ("test", test_df)]:
+        print(f"  {name} {label_col} dist: "
+              f"{split_df[label_col].value_counts(normalize=True).sort_index().round(3).to_dict()}")
+        print(f"  {name} completeness dist: "
+              f"{split_df['completeness_tier'].value_counts(normalize=True).round(3).to_dict()}")
 
     vocab = build_comorbidity_vocab(train_df, dcfg["comorbidity_field"], dcfg["comorbidity_vocab_size"])
     print(f"Comorbidity vocab (top {len(vocab)} tokens from train): {vocab}")
