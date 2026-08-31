@@ -14,6 +14,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
@@ -45,12 +46,13 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-def run_epoch(model, loader, device, criterion, optimizer=None, scaler=None):
+def run_epoch(model, loader, device, criterion, optimizer=None, scaler=None, desc=""):
     train_mode = optimizer is not None
     model.train(train_mode)
     total_loss, all_true, all_pred = 0.0, [], []
 
-    for batch in loader:
+    pbar = tqdm(loader, desc=desc, leave=False)
+    for batch in pbar:
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         labels = batch.pop("label")
 
@@ -71,6 +73,7 @@ def run_epoch(model, loader, device, criterion, optimizer=None, scaler=None):
         total_loss += loss.item() * labels.size(0)
         all_true.extend(labels.cpu().tolist())
         all_pred.extend(logits.argmax(dim=-1).cpu().tolist())
+        pbar.set_postfix(loss=f"{loss.item():.4f}")
 
     metrics = compute_metrics(all_true, all_pred)
     metrics["loss"] = total_loss / len(loader.dataset)
@@ -153,8 +156,9 @@ def main():
         print(f"Resumed from {args.resume} at epoch {start_epoch}")
 
     for epoch in range(start_epoch, tcfg["epochs"]):
-        train_metrics = run_epoch(model, train_loader, device, criterion, optimizer, scaler)
-        val_metrics = run_epoch(model, val_loader, device, criterion)
+        train_metrics = run_epoch(model, train_loader, device, criterion, optimizer, scaler,
+                                   desc=f"epoch {epoch} train")
+        val_metrics = run_epoch(model, val_loader, device, criterion, desc=f"epoch {epoch} val")
         print(f"[epoch {epoch}] train: {train_metrics} | val: {val_metrics}")
 
         if val_metrics["qwk"] > best_qwk:

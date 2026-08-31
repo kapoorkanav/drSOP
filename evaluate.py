@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
@@ -73,7 +74,7 @@ def main():
 
     all_true, all_pred, all_alpha = [], [], []
     with torch.no_grad():
-        for batch in loader:
+        for batch in tqdm(loader, desc=f"evaluating ({args.split})"):
             batch = {k: v.to(device) for k, v in batch.items()}
             labels = batch.pop("label")
             logits, alpha = model(batch, return_alpha=True)
