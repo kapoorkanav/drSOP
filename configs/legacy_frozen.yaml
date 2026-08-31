@@ -1,0 +1,49 @@
+data:
+  # Points directly at the shared mount -- no local copy, /home doesn't have room for it.
+  raw_labels_csv: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/labels_brset.csv
+  images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
+  # Preserved, separate from the current data/processed (all-data, stratified split) --
+  # built by scripts/prepare_data_complete_metadata_only.py, not scripts/prepare_data.py.
+  processed_dir: data/processed_complete_metadata_only
+  image_size: 224
+  label_col: DR_ICDR              # ICDR severity grade (0-4)
+  numeric_fields: [patient_age, diabetes_time_y]
+  categorical_fields: [patient_sex, insuline]
+  comorbidity_field: comorbidities
+  comorbidity_vocab_size: 15
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true
+  proj_dim: 512
+  meta_encoder:
+    d_model: 128
+    n_layers: 2
+    n_heads: 4
+    dropout: 0.1
+  gate:
+    n_layers: 1
+    n_heads: 4
+    dropout: 0.1
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 5  # ICDR grade 0-4
+
+train:
+  batch_size: 32
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/exp1_legacy_frozen   # preserved, separate from runs/exp1
+  seed: 42
+  early_stopping_patience: 10
