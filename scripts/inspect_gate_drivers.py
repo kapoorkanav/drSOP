@@ -146,6 +146,32 @@ def main():
     else:
         print("  Not enough grades with >=5 examples to compare.")
 
+    print("\n" + "=" * 78)
+    print("PARTIAL CORRELATION -- what's left after removing true-grade's effect?")
+    print("=" * 78)
+    print("  Several drivers above (n_missing, n_comorbidities, diabetes_time_y) plausibly")
+    print("  just track severity rather than being independent effects (e.g. longer diabetes")
+    print("  duration -> more likely to have DR -> higher alpha anyway). Regresses alpha on")
+    print("  true grade, takes the residual, and re-tests each driver against THAT -- what")
+    print("  survives is independent of severity; what vanishes was severity all along.\n")
+    grade_vals = pd.to_numeric(df[label_col], errors="coerce")
+    valid = grade_vals.notna() & df["alpha_mean"].notna()
+    slope, intercept = np.polyfit(grade_vals[valid], df.loc[valid, "alpha_mean"], deg=1)
+    df["alpha_resid"] = np.nan
+    df.loc[valid, "alpha_resid"] = (
+        df.loc[valid, "alpha_mean"] - (slope * grade_vals[valid] + intercept)
+    )
+    r2 = np.corrcoef(grade_vals[valid], df.loc[valid, "alpha_mean"])[0, 1] ** 2
+    print(f"  alpha ~ {slope:.4f}*grade + {intercept:.4f}   (R^2 = {r2:.3f} of alpha's "
+          f"variance explained by grade alone)\n")
+    for col in ["n_missing", "n_comorbidities"] + dcfg["numeric_fields"]:
+        if col in df.columns:
+            correlate(df, col, target="alpha_resid")
+    print()
+    if "quality" in df.columns:
+        print("\n  Residual alpha by image quality (grade-adjusted):")
+        group_means(df, "quality", target="alpha_resid")
+
 
 if __name__ == "__main__":
     main()
