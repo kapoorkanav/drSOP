@@ -46,4 +46,4 @@ train:
   amp: true
   output_dir: runs/exp1_balanced_frozen   # separate from every other run's output dir
   seed: 42
-  early_stopping_patience: 10
+  early_stopping_patience: 5
