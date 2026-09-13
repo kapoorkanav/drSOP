@@ -31,6 +31,56 @@ from drsop.config import load_config, resolve  # noqa: E402
 INIT_STD = 0.02  # what gate.py initialises missing_proj.weight and modality_emb to
 
 
+def default_linear_init_std(weight: torch.Tensor) -> float:
+    """PyTorch's nn.Linear default: uniform(-1/sqrt(fan_in), 1/sqrt(fan_in)), whose std is
+    bound/sqrt(3). Needed because alpha_head uses the default init, not gate.py's 0.02."""
+    fan_in = weight.shape[1]
+    return (1.0 / fan_in ** 0.5) / 3 ** 0.5
+
+
+def report_param(label: str, tensor: torch.Tensor, init_std: float) -> float:
+    ratio = tensor.std().item() / init_std if init_std else float("nan")
+    verdict = "unmoved" if ratio < 1.5 else ("grew" if ratio < 4 else "grew a lot")
+    print(f"  {label:<30} std={tensor.std().item():.5f}  init={init_std:.5f}  "
+          f"{ratio:>5.2f}x  {verdict}")
+    return ratio
+
+
+def report_gate(sd: dict) -> None:
+    """Whether the gate's parameters moved off their initialisation at all -- the question
+    that has to be answered before any claim about what the gate 'learned' means anything."""
+    print("=" * 78)
+    print("DID THE GATE TRAIN AT ALL?")
+    print("=" * 78)
+    print(f"  {'parameter':<30} {'observed':<16} {'expected at init':<10}\n")
+    ratios = {}
+    if "gate.modality_emb" in sd:
+        ratios["modality_emb"] = report_param("modality_emb", sd["gate.modality_emb"], INIT_STD)
+    if "gate.alpha_head.weight" in sd:
+        w = sd["gate.alpha_head.weight"]
+        ratios["alpha_head"] = report_param("alpha_head.weight", w, default_linear_init_std(w))
+    for key in sd:
+        if key.startswith("gate.encoder") and key.endswith("weight") and sd[key].dim() == 2:
+            w = sd[key]
+            ratios[key] = report_param(key.replace("gate.encoder.layers.", "encoder."),
+                                        w, default_linear_init_std(w))
+            break  # one encoder weight is enough as a spot check
+    if "gate.missing_proj.weight" in sd:
+        ratios["missing_proj"] = report_param("missing_proj.weight",
+                                               sd["gate.missing_proj.weight"], INIT_STD)
+
+    moved = [k for k, r in ratios.items() if r >= 1.5]
+    print()
+    if not moved:
+        print("  => The WHOLE GATE is essentially at initialisation. Any 'the gate learned X'")
+        print("     claim about this checkpoint is suspect: a fixed near-random readout of")
+        print("     severity-informative embeddings still produces a severity-correlated alpha,")
+        print("     with no routing having been learned at all.")
+    else:
+        print(f"  => Moved off init: {', '.join(moved)}. The gate did train, so its routing")
+        print("     behaviour reflects something learned rather than a random projection.")
+
+
 def describe(name: str, tensor: torch.Tensor) -> None:
     print(f"  {name:<34} std={tensor.std().item():.5f}  mean|w|={tensor.abs().mean().item():.5f}  "
           f"max|w|={tensor.abs().max().item():.5f}")
@@ -52,23 +102,21 @@ def main():
     print(f"Checkpoint: {args.checkpoint}")
     print(f"Saved at epoch {ckpt['epoch']} (best val QWK {ckpt['best_qwk']:.4f})\n")
 
+    report_gate(sd)
+
     key = "gate.missing_proj.weight"
     if key not in sd:
-        print(f"No {key} in this checkpoint -- it was trained without the missingness token "
-              "(model.gate.use_missingness_token was false or absent).")
+        print(f"\nNo {key} in this checkpoint -- trained without the missingness token "
+              "(model.gate.use_missingness_token false or absent).")
         return
 
     w = sd[key]           # [dim, n_flags]
     b = sd["gate.missing_proj.bias"]
-    print("=" * 78)
-    print("DID THE MISSINGNESS TOKEN LEARN? (all three started at std=0.02)")
+    print("\n" + "=" * 78)
+    print("DID THE MISSINGNESS TOKEN SPECIFICALLY LEARN?")
     print("=" * 78)
     describe("missing_proj.weight", w)
     describe("missing_proj.bias", b)
-    if "gate.modality_emb" in sd:
-        describe("modality_emb  (same init, yardstick)", sd["gate.modality_emb"])
-    if "gate.alpha_head.weight" in sd:
-        describe("alpha_head.weight  (default init)", sd["gate.alpha_head.weight"])
 
     growth = w.std().item() / INIT_STD
     print(f"\n  missing_proj.weight std is {growth:.2f}x its initialisation ({INIT_STD}).")
