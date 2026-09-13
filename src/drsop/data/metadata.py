@@ -7,6 +7,16 @@ import torch
 from drsop.data.text import parse_locale_number, tokenize_comorbidities
 
 
+def _is_missing(value) -> bool:
+    """True for anything that means "not recorded" once pandas has read the CSV: None,
+    a float NaN, a blank string, or the literal "nan" that str(float('nan')) produces."""
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    return str(value).strip().lower() in ("", "nan")
+
+
 class MetadataProcessor:
     """Turns a raw BRSET row into fixed-size numeric/categorical/comorbidity tensors,
     using stats/vocab fit on the training split by scripts/prepare_data.py."""
@@ -48,11 +58,15 @@ class MetadataProcessor:
             numeric.append(0.0 if is_missing else (val - mean) / std)
             numeric_missing.append(1.0 if is_missing else 0.0)
 
-        categorical = []
+        categorical, categorical_missing = [], []
         for field in self.categorical_fields:
             vocab = self.cat_to_idx[field]
-            raw = str(row.get(field))
-            categorical.append(vocab.get(raw, len(vocab)))  # unseen/missing-category index
+            value = row.get(field)
+            categorical.append(vocab.get(str(value), len(vocab)))  # unseen/missing-category index
+            # The index above already routes missing values to the reserved embedding, but that
+            # conflates them with genuinely-unseen categories and buries the fact inside a lookup.
+            # This flag surfaces it explicitly so the gate can be told about it directly.
+            categorical_missing.append(1.0 if _is_missing(value) else 0.0)
 
         comorbid_text = row.get(self.comorbidity_field)
         comorbidity_missing = not isinstance(comorbid_text, str)  # true NaN, not just "no tokens found"
@@ -63,6 +77,7 @@ class MetadataProcessor:
             "numeric": torch.tensor(numeric, dtype=torch.float32),
             "numeric_missing": torch.tensor(numeric_missing, dtype=torch.float32),
             "categorical": torch.tensor(categorical, dtype=torch.long),
+            "categorical_missing": torch.tensor(categorical_missing, dtype=torch.float32),
             "comorbidity": torch.tensor(multi_hot, dtype=torch.float32),
             "comorbidity_missing": torch.tensor(float(comorbidity_missing), dtype=torch.float32),
         }

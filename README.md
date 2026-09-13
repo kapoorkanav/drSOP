@@ -72,6 +72,38 @@ python train.py --config configs/lora.yaml
 python evaluate.py --config configs/lora.yaml --checkpoint runs/exp1_lora/best.pt
 ```
 
+**Balanced cohort** (current best, test QWK 0.8561): `scripts/prepare_data_balanced.py` removes
+the metadata-missingness/DR-rate confound by construction — downsamples only DR-negative patients
+from whichever metadata group has the lower natural DR rate until both match, never discarding a
+DR-positive patient. Paired with `configs/balanced_frozen.yaml` / `configs/balanced_lora.yaml`
+(own `processed_dir: data/processed_balanced`, own `output_dir`):
+
+```bash
+python scripts/prepare_data_balanced.py --config configs/balanced_lora.yaml
+python train.py --config configs/balanced_lora.yaml
+python evaluate.py --config configs/balanced_lora.yaml --checkpoint runs/exp1_balanced_lora/best.pt
+```
+
+**Missingness-aware gate** (`configs/balanced_missgate_lora.yaml`): identical to
+`balanced_lora.yaml` except `model.gate.use_missingness_token: true`, which adds a third token to
+the gate's sequence built from the per-field missingness pattern (one flag per numeric field, per
+categorical field, plus comorbidities) via a small `Linear(k, proj_dim)`. Motivation: diagnostics
+showed the gate's routing is overwhelmingly severity-driven (true grade explains 59% of alpha's
+variance) with only a weak independent response to missingness (partial rho=0.14) — the pattern is
+technically present in `meta_emb` but buried in a pooled 512-dim vector. This hands it over
+directly. The missingness token is contextual only (the two modality tokens are still what gets
+pooled for alpha), and the whole thing is off by default, so every other config and every existing
+checkpoint is unaffected. Reuses `data/processed_balanced`, so it's a clean single-variable A/B
+against the 0.8561 run:
+
+```bash
+python train.py --config configs/balanced_missgate_lora.yaml
+python evaluate.py --config configs/balanced_missgate_lora.yaml \
+    --checkpoint runs/exp1_balanced_missgate_lora/best.pt
+python scripts/inspect_gate_drivers.py --config configs/balanced_missgate_lora.yaml \
+    --checkpoint runs/exp1_balanced_missgate_lora/best.pt
+```
+
 **Reproducing the earlier complete-metadata-only experiments** (frozen test QWK 0.7043, LoRA
 test QWK 0.8351 — see "Results so far" below): those used a different data prep step (drops any
 row missing metadata, plain grouped-not-stratified split), preserved as

@@ -63,6 +63,7 @@ class BRSETDataset(Dataset):
             "numeric": meta["numeric"],
             "numeric_missing": meta["numeric_missing"],
             "categorical": meta["categorical"],
+            "categorical_missing": meta["categorical_missing"],
             "comorbidity": meta["comorbidity"],
             "comorbidity_missing": meta["comorbidity_missing"],
             "label": label,
