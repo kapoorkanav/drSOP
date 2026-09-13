@@ -58,4 +58,4 @@ train:
   amp: true
   output_dir: runs/exp1_balanced_missgate_lora   # separate from every other run's output dir
   seed: 42
-  early_stopping_patience: 5
+  early_stopping_patience: 10
