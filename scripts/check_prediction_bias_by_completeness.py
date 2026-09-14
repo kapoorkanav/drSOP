@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
 from drsop.data.brset_dataset import BRSETDataset  # noqa: E402
+from drsop.data.labels import apply_label_map  # noqa: E402
 from drsop.data.metadata import MetadataProcessor  # noqa: E402
 from drsop.models.fusion_model import DRFusionModel  # noqa: E402
 
@@ -46,6 +47,8 @@ def main():
 
     split_csv = Path(processed_dir) / f"{args.split}.csv"
     raw_df = pd.read_csv(split_csv)
+    # Same mapping BRSETDataset applies, so truth lines up with the model's classes.
+    raw_df[label_col] = apply_label_map(raw_df[label_col], dcfg.get("label_map"))
     if "completeness_tier" not in raw_df.columns:
         raise RuntimeError(
             f"{split_csv} has no completeness_tier column -- rerun scripts/prepare_data.py "
@@ -63,8 +66,8 @@ def main():
 
     ds = BRSETDataset(
         split_csv=str(split_csv), images_dir=dcfg["images_dir"], metadata=metadata,
-        label_col=label_col, image_size=dcfg["image_size"], train=False,
-    )
+        label_col=label_col, image_size=dcfg["image_size"], train=False, label_map=dcfg.get("label_map"),
+        )
     loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=4)
 
     model = DRFusionModel(

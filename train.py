@@ -113,6 +113,7 @@ def main():
             label_col=label_col,
             image_size=dcfg["image_size"],
             train=train,
+            label_map=dcfg.get("label_map"),
         )
         return DataLoader(ds, batch_size=tcfg["batch_size"], shuffle=train,
                            num_workers=tcfg["num_workers"], pin_memory=True, drop_last=train), ds

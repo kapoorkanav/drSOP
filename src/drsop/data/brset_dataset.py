@@ -6,6 +6,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+from drsop.data.labels import apply_label_map
 from drsop.data.metadata import MetadataProcessor
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -31,8 +32,11 @@ def build_transform(image_size: int, train: bool) -> transforms.Compose:
 
 class BRSETDataset(Dataset):
     def __init__(self, split_csv: str, images_dir: str, metadata: MetadataProcessor,
-                 label_col: str, image_size: int, train: bool):
+                 label_col: str, image_size: int, train: bool, label_map: dict = None):
         self.df = pd.read_csv(split_csv)
+        # Applied to the dataframe itself, not per-item, so anything reading train_ds.df
+        # downstream (class weights in particular) sees the merged labels too.
+        self.df[label_col] = apply_label_map(self.df[label_col], label_map)
         self.images_dir = Path(images_dir)
         self.metadata = metadata
         self.label_col = label_col

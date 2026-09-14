@@ -31,6 +31,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drsop.config import load_config, resolve  # noqa: E402
 from drsop.data.brset_dataset import BRSETDataset  # noqa: E402
+from drsop.data.labels import apply_label_map  # noqa: E402
 from drsop.data.metadata import MetadataProcessor  # noqa: E402
 from drsop.models.fusion_model import DRFusionModel  # noqa: E402
 from drsop.models.gate import GateTransformer  # noqa: E402
@@ -74,7 +75,8 @@ def main():
     processed_dir = dcfg["processed_dir"]
 
     split_csv = Path(processed_dir) / f"{args.split}.csv"
-    grades = pd.read_csv(split_csv)[label_col].values
+    # Mapped the same way BRSETDataset maps it, so these line up with the model's classes.
+    grades = apply_label_map(pd.read_csv(split_csv)[label_col], dcfg.get("label_map")).values
 
     metadata = MetadataProcessor(
         processed_dir=processed_dir, numeric_fields=dcfg["numeric_fields"],
@@ -82,8 +84,8 @@ def main():
     )
     ds = BRSETDataset(
         split_csv=str(split_csv), images_dir=dcfg["images_dir"], metadata=metadata,
-        label_col=label_col, image_size=dcfg["image_size"], train=False,
-    )
+        label_col=label_col, image_size=dcfg["image_size"], train=False, label_map=dcfg.get("label_map"),
+        )
     loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=4)
 
     categorical_cardinalities = [metadata.num_categories(f) for f in dcfg["categorical_fields"]]

@@ -52,6 +52,7 @@ def main():
         label_col=label_col,
         image_size=dcfg["image_size"],
         train=False,
+        label_map=dcfg.get("label_map"),
     )
     loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=4)
 
