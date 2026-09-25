@@ -1,0 +1,64 @@
+# mBRSET, 5-class, LoRA. The BRSET experiment-3 architecture with NO missingness token,
+# trained on all labeled mBRSET data.
+#
+# There is no balanced-cohort variant for mBRSET: its metadata is ~99% complete, so the
+# metadata-missingness/DR-rate confound that the balanced cohort existed to remove is not
+# present, and there is nothing to balance. See mbrset/README.md.
+data:
+  raw_labels_csv: /media/DATA/users/shared/file/mbrset-a-mobile-brazilian-retinal-dataset-1.0/labels_mbrset.csv
+  images_dir: /media/DATA/users/shared/file/mbrset-a-mobile-brazilian-retinal-dataset-1.0/images
+  # Separate from every BRSET processed_dir -- built by mbrset/prepare_data_mbrset.py.
+  processed_dir: data/processed_mbrset
+  image_size: 224
+  label_col: final_icdr           # mBRSET's ICDR severity grade (0-4); BRSET called it DR_ICDR
+  # Deliberately mirrors BRSET's field counts (2 numeric, 2 categorical, 1 comorbidity text)
+  # so the metadata encoder is identical and the two datasets stay comparable. mBRSET has more
+  # fields available (insurance, educational_level) -- adding them would break that comparison.
+  numeric_fields: [age, dm_time]          # BRSET: patient_age, diabetes_time_y
+  categorical_fields: [sex, insulin]      # BRSET: patient_sex, insuline
+  # Synthesized by the prep script from mBRSET's 10 binary comorbidity/lifestyle columns.
+  comorbidity_field: comorbidities
+  comorbidity_vocab_size: 15
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true  # ignored when use_lora is true -- LoRA always keeps the base frozen
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.1
+  proj_dim: 512
+  meta_encoder:
+    d_model: 128
+    n_layers: 2
+    n_heads: 4
+    dropout: 0.1
+  gate:
+    n_layers: 1
+    n_heads: 4
+    dropout: 0.1
+    # No use_missingness_token -- experiment 4 showed it inert on BRSET, and mBRSET has
+    # almost no missingness for it to read.
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 5  # ICDR grade 0-4
+
+train:
+  batch_size: 8          # LoRA backprops through the whole backbone; 32 OOMs on this GPU
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/mbrset_lora
+  seed: 42
+  early_stopping_patience: 10
