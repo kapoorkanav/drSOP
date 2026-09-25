@@ -115,9 +115,11 @@ def guess_roles(out: Tee, df: pd.DataFrame) -> dict:
     out.rule("3. ROLE CANDIDATES -- which column is which")
     roles = {}
 
+    # A patient column need not be named like an id at all -- mBRSET calls it plain "patient".
+    patient_like = [c for c in df.columns if re.search(r"patient|subject|\bpac\b", c, re.I)]
     id_like = [c for c in df.columns
                if re.search(r"(^|_)(id|file|image|img|name|path)(_|$)", c, re.I)]
-    patient_like = [c for c in id_like if re.search(r"patient|subject|pac", c, re.I)]
+    id_like = patient_like + [c for c in id_like if c not in patient_like]
     out("")
     out(f"Columns that look like identifiers: {id_like or 'none'}")
     out(f"  ...of those, patient-shaped:     {patient_like or 'none'}")
@@ -244,12 +246,33 @@ def missingness_confound(out: Tee, df: pd.DataFrame, metadata_fields: list,
     label and any model can score well without reading the image."""
     out.rule("7. METADATA-MISSINGNESS CONFOUND -- the check that drove the balanced cohort")
     out("")
-    out(f"  metadata fields used: {metadata_fields}")
     out(f"  DR column: {dr_col}   patient column: {patient_col}")
     if not metadata_fields or dr_col not in df.columns:
         out("  SKIPPED -- pass --metadata-fields and --dr-col once the columns are known.")
         return
 
+    # One near-empty field decides every patient's tier on its own, so report the split both
+    # ways: a field missing for most patients makes "complete metadata" mean that field alone.
+    missing_pct = {f: 100 * df[f].isna().mean() for f in metadata_fields}
+    dominant = [f for f, p in missing_pct.items() if p > 50]
+    field_sets = [("all metadata fields", metadata_fields)]
+    if dominant:
+        field_sets.append(("excluding mostly-empty fields " + str(dominant),
+                           [f for f in metadata_fields if f not in dominant]))
+
+    for label, fields in field_sets:
+        out("")
+        out("-" * 78)
+        out(f"  Completeness defined over {label}")
+        out(f"  fields: {fields}")
+        _confound_for_fields(out, df, fields, dr_col, patient_col)
+
+
+def _confound_for_fields(out: Tee, df: pd.DataFrame, metadata_fields: list,
+                          dr_col: str, patient_col: str) -> None:
+    if not metadata_fields:
+        out("  no fields left -- skipped")
+        return
     present = df[metadata_fields].notna().sum(axis=1)
     tier = pd.Series("partial", index=df.index)
     tier[present == len(metadata_fields)] = "full"
@@ -279,6 +302,13 @@ def missingness_confound(out: Tee, df: pd.DataFrame, metadata_fields: list,
         out(f"  full-metadata DR rate {100 * r_full:.1f}%  vs  "
             f"missing-metadata DR rate {100 * r_rest:.1f}%")
         out(f"  difference: {100 * (r_full - r_rest):+.1f} percentage points")
+        smaller = min(len(full), len(rest))
+        if smaller < 30:
+            out("")
+            out(f"  => UNDERPOWERED: the smaller group has only {smaller} patients, so this rate")
+            out("     difference is not measurable and the balanced cohort has nothing to")
+            out("     balance. Treat the confound as absent at this completeness definition.")
+            return
         if abs(r_full - r_rest) < 0.03:
             out("  => Groups already match. The balanced cohort would be a near no-op here,")
             out("     and experiments 3/4 collapse onto experiment 2. Worth knowing early.")
@@ -330,7 +360,7 @@ def main():
     patient_col = args.patient_col
     if not patient_col:
         patient_like = [c for c in roles["id_candidates"]
-                        if re.search(r"patient|subject|pac", c, re.I)]
+                        if re.search(r"patient|subject|\bpac\b", c, re.I)]
         # Fall back to the identifier that groups rows rather than the one that is unique.
         grouping = [c for c in roles["id_candidates"] if df[c].nunique() < len(df)]
         patient_col = (patient_like or grouping or [None])[0]
@@ -346,6 +376,10 @@ def main():
     if not dr_col:
         binary = [c for c in roles["dr_candidates"] if df[c].nunique(dropna=True) == 2]
         dr_col = (binary or roles["dr_candidates"] or [None])[0]
+        if dr_col and not binary:
+            out("")
+            out(f"NOTE: no binary DR column in this dataset. Treating '{dr_col}' > 0 as")
+            out("      DR-positive for the confound check and the balanced cohort.")
     meta_fields = args.metadata_fields
     if meta_fields is None:
         meta_fields = [c for c in roles["metadata_candidates"] if c in df.columns]
