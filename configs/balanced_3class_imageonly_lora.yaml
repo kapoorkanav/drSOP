@@ -5,10 +5,20 @@
 # worth anything at all. If this config matches configs/balanced_3class_lora.yaml, the metadata
 # encoder and the gate are not earning their complexity and the image carries the signal.
 #
-# Identical to configs/balanced_3class_lora.yaml in every other respect -- same balanced cohort,
-# same 3-class label map, same backbone, same LoRA settings, same proj_dim, same head shape,
-# same optimiser, batch size, loss and stopping rule. `model.image_only` is the only change, so
-# any difference in score is attributable to the metadata path and nothing else.
+# Kept as pure as possible: RETFound -> MLP head, nothing in between. proj_dim is null, so the
+# 1024 -> 512 projection is dropped too. That projection only ever existed so the fusion gate
+# could add the image and metadata embeddings elementwise (it needs both the same width); with
+# no metadata branch there is nothing to match, and it would be a pure bottleneck halving the
+# backbone's representation.
+#
+# The trade-off: against configs/balanced_3class_lora.yaml this differs in two ways rather than
+# one (no metadata path AND no bottleneck), so a score gap is not attributable to the metadata
+# alone. It answers the blunter question instead -- how far does the image alone get you? Set
+# proj_dim back to 512 to isolate the metadata path specifically.
+#
+# Everything else matches configs/balanced_3class_lora.yaml: same balanced cohort, same 3-class
+# label map, same backbone, same LoRA settings, same head shape, same optimiser, batch size,
+# loss and stopping rule.
 data:
   raw_labels_csv: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/labels_brset.csv
   images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
@@ -41,7 +51,8 @@ model:
     r: 8
     alpha: 16
     dropout: 0.1
-  proj_dim: 512
+  # null = no projection layer at all; the head takes RETFound's native 1024-d embedding.
+  proj_dim: null
   # No meta_encoder and no gate block: those components do not exist in this model. Leaving
   # them out rather than leaving them unused keeps the "no metadata" claim unambiguous.
   head:

@@ -11,10 +11,12 @@ def build_model(mcfg: dict, categorical_cardinalities: list, n_numeric: int,
     model exactly as before, so previous experiments are unaffected.
     """
     if mcfg.get("image_only", False):
+        # proj_dim is optional here: absent or null means no projection, so the backbone's
+        # native embedding goes straight into the head.
         return ImageOnlyModel(
             retfound_cfg=mcfg,
             head_cfg=mcfg["head"],
-            proj_dim=mcfg["proj_dim"],
+            proj_dim=mcfg.get("proj_dim"),
             num_classes=num_classes,
         )
     return DRFusionModel(

@@ -42,7 +42,7 @@ from drsop.data.brset_dataset import BRSETDataset  # noqa: E402
 from drsop.data.labels import apply_label_map  # noqa: E402
 from drsop.data.metadata import MetadataProcessor  # noqa: E402
 from drsop.metrics import compute_metrics  # noqa: E402
-from drsop.models.fusion_model import DRFusionModel  # noqa: E402
+from drsop.models.factory import build_model  # noqa: E402
 
 
 def confusion(true, pred, n_classes):
@@ -129,12 +129,14 @@ def main():
     )
     loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=4)
 
-    model = DRFusionModel(
-        retfound_cfg=mcfg, meta_cfg=mcfg["meta_encoder"], gate_cfg=mcfg["gate"],
-        head_cfg=mcfg["head"],
+    # Via the factory so this works for the image-only control too, which has no gate and no
+    # proj_dim.
+    model = build_model(
+        mcfg,
         categorical_cardinalities=[metadata.num_categories(f) for f in dcfg["categorical_fields"]],
-        n_numeric=len(dcfg["numeric_fields"]), n_comorbidities=len(metadata.comorbidity_vocab),
-        proj_dim=mcfg["proj_dim"], num_classes=n_classes,
+        n_numeric=len(dcfg["numeric_fields"]),
+        n_comorbidities=len(metadata.comorbidity_vocab),
+        num_classes=n_classes,
     ).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model"], strict=False)

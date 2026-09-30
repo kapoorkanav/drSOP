@@ -69,7 +69,17 @@ class RetfoundEncoder(nn.Module):
             )
 
         embed_dim = self.backbone.embed_dim if hasattr(self.backbone, "embed_dim") else 1024
-        self.proj = nn.Linear(embed_dim, proj_dim)
+        # proj_dim=None means no projection at all: the backbone's own embedding goes straight
+        # out at its native width. The gated-fusion model always passes a real proj_dim, since
+        # its gate has to add the image and metadata embeddings elementwise and therefore needs
+        # them the same width. An image-only model has nothing to match, so the projection would
+        # be a pure bottleneck. out_dim lets callers size their head either way.
+        if proj_dim is None:
+            self.proj = nn.Identity()
+            self.out_dim = embed_dim
+        else:
+            self.proj = nn.Linear(embed_dim, proj_dim)
+            self.out_dim = proj_dim
 
         self.freeze = freeze
         self.use_lora = use_lora
