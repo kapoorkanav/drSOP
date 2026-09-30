@@ -22,7 +22,7 @@ from drsop.data.brset_dataset import BRSETDataset  # noqa: E402
 from drsop.data.metadata import MetadataProcessor  # noqa: E402
 from drsop.losses import build_loss  # noqa: E402
 from drsop.metrics import compute_metrics  # noqa: E402
-from drsop.models.fusion_model import DRFusionModel  # noqa: E402
+from drsop.models.factory import build_model  # noqa: E402
 
 
 def trainable_state_dict(model: torch.nn.Module) -> dict:
@@ -121,15 +121,11 @@ def main():
     train_loader, train_ds = make_loader("train", train=True)
     val_loader, _ = make_loader("val", train=False)
 
-    model = DRFusionModel(
-        retfound_cfg=mcfg,
-        meta_cfg=mcfg["meta_encoder"],
-        gate_cfg=mcfg["gate"],
-        head_cfg=mcfg["head"],
+    model = build_model(
+        mcfg,
         categorical_cardinalities=categorical_cardinalities,
         n_numeric=len(dcfg["numeric_fields"]),
         n_comorbidities=n_comorbidities,
-        proj_dim=mcfg["proj_dim"],
         num_classes=num_classes,
     ).to(device)
 

@@ -1,0 +1,62 @@
+# IMAGE-ONLY CONTROL: RETFound + LoRA straight into the MLP head. No metadata, no fusion gate.
+#
+# This is the baseline every fusion result should have been measured against. Experiments 1-4b
+# compare fusion variants to each other, which cannot answer whether reading the metadata is
+# worth anything at all. If this config matches configs/balanced_3class_lora.yaml, the metadata
+# encoder and the gate are not earning their complexity and the image carries the signal.
+#
+# Identical to configs/balanced_3class_lora.yaml in every other respect -- same balanced cohort,
+# same 3-class label map, same backbone, same LoRA settings, same proj_dim, same head shape,
+# same optimiser, batch size, loss and stopping rule. `model.image_only` is the only change, so
+# any difference in score is attributable to the metadata path and nothing else.
+data:
+  raw_labels_csv: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/labels_brset.csv
+  images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
+  # Reuses the balanced cohort's existing splits -- nothing to regenerate.
+  processed_dir: data/processed_balanced
+  image_size: 224
+  label_col: DR_ICDR              # ICDR severity grade (0-4), merged below
+  # Same mapping as configs/balanced_3class_lora.yaml, so the two are directly comparable.
+  #   0 = no DR | 1 = mid (old grades 1-2, monitor) | 2 = severe (old 3-4, refer)
+  label_map: {0: 0, 1: 1, 2: 1, 3: 2, 4: 2}
+  # These stay because the dataset and MetadataProcessor still read them to build each batch.
+  # The model never looks at the metadata tensors -- see src/drsop/models/image_only_model.py.
+  numeric_fields: [patient_age, diabetes_time_y]
+  categorical_fields: [patient_sex, insuline]
+  comorbidity_field: comorbidities
+  comorbidity_vocab_size: 15
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  image_only: true       # <-- the only difference from configs/balanced_3class_lora.yaml
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true  # ignored when use_lora is true -- LoRA always keeps the base frozen
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.1
+  proj_dim: 512
+  # No meta_encoder and no gate block: those components do not exist in this model. Leaving
+  # them out rather than leaving them unused keeps the "no metadata" claim unambiguous.
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 3  # 0=none, 1=mid (old grades 1-2), 2=severe (old grades 3-4)
+
+train:
+  batch_size: 8          # LoRA backprops through the whole backbone; 32 OOMs on this GPU
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/exp1_balanced_3class_imageonly_lora   # separate from every other run
+  seed: 42
+  early_stopping_patience: 10
