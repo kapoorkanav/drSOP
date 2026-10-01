@@ -274,12 +274,102 @@ def check_checkpoint(cfg: dict, ckpt_path: str, splits: dict) -> None:
              f"({diseased - missed}/{diseased});  severe called healthy {c3[2, 0]}/{c3[2].sum()}")
 
 
+# Every experiment in the project, most important first. --all walks this list and skips any
+# entry whose checkpoint has not been trained yet.
+REGISTRY = [
+    ("configs/balanced_3class_lora.yaml", "runs/exp1_balanced_3class_lora"),
+    ("configs/balanced_3class_imageonly_proj512_lora.yaml",
+     "runs/exp1_balanced_3class_imageonly_proj512_lora"),
+    ("configs/balanced_3class_imageonly_lora.yaml", "runs/exp1_balanced_3class_imageonly_lora"),
+    ("configs/balanced_lora.yaml", "runs/exp1_balanced_lora"),
+    ("configs/balanced_missgate_lora.yaml", "runs/exp1_balanced_missgate_lora"),
+    ("configs/legacy_lora.yaml", "runs/exp1_legacy_lora"),
+    ("configs/lora.yaml", "runs/exp1_lora"),
+    ("mbrset/configs/mbrset_lora.yaml", "runs/mbrset_lora"),
+    ("mbrset/configs/mbrset_3class_lora.yaml", "runs/mbrset_3class_lora"),
+]
+
+
+def verify_all() -> int:
+    """Runs every experiment's checks in one pass and prints one summary at the end."""
+    summary = []
+    for cfg_path, run_dir in REGISTRY:
+        ckpt = ROOT / run_dir / "best.pt"
+        if not (ROOT / cfg_path).exists():
+            continue
+        print("\n\n" + "#" * 78)
+        print(f"# {cfg_path}")
+        print("#" * 78)
+        if not ckpt.exists():
+            print(f"  SKIPPED -- no checkpoint at {run_dir}/best.pt (not trained yet)")
+            summary.append((cfg_path, None, None))
+            continue
+        RESULTS.clear()
+        try:
+            run_one(str(ROOT / cfg_path), str(ckpt))
+            failed = [n for n, ok in RESULTS if not ok]
+            summary.append((cfg_path, len(RESULTS) - len(failed), len(RESULTS)))
+            if failed:
+                for n in failed:
+                    print(f"  FAILED: {n}")
+        except Exception as exc:  # keep going; one broken run should not hide the others
+            print(f"  ERROR: {type(exc).__name__}: {exc}")
+            summary.append((cfg_path, -1, -1))
+
+    print("\n\n" + "=" * 78)
+    print("OVERALL SUMMARY")
+    print("=" * 78)
+    bad = 0
+    for cfg_path, passed, total in summary:
+        if passed is None:
+            print(f"  {'SKIP':>6}  {cfg_path}  (not trained)")
+        elif passed == -1:
+            print(f"  {'ERROR':>6}  {cfg_path}")
+            bad += 1
+        elif passed == total:
+            print(f"  {'OK':>6}  {cfg_path}  ({passed}/{total} checks)")
+        else:
+            print(f"  {'FAIL':>6}  {cfg_path}  ({passed}/{total} checks)")
+            bad += 1
+    print()
+    print("  Compare the 'test.csv sha256' lines above: configs sharing a processed_dir must")
+    print("  show the same digest, or they are not being scored on the same test set.")
+    if bad:
+        print(f"\n  {bad} experiment(s) need attention.")
+        return 1
+    print("\n  All trained experiments passed.")
+    return 0
+
+
+def run_one(config_path: str, checkpoint: str = None) -> None:
+    cfg = resolve(load_config(config_path), ROOT)
+    dcfg, mcfg = cfg["data"], cfg["model"]
+    print(f"config:     {config_path}")
+    print(f"checkpoint: {checkpoint or '(none -- data checks only)'}")
+    print(f"model:      {'image-only' if mcfg.get('image_only') else 'gated fusion'}, "
+          f"{mcfg['num_classes']} classes, proj_dim={mcfg.get('proj_dim')}")
+    splits = check_splits(dcfg, dcfg["label_col"])
+    if not splits:
+        return
+    check_no_leakage_in_stats(dcfg, splits)
+    check_label_map(dcfg, mcfg, splits)
+    if checkpoint:
+        check_checkpoint(cfg, checkpoint, splits)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
+    parser.add_argument("--all", action="store_true",
+                        help="verify every experiment in one pass (no other arguments needed)")
+    parser.add_argument("--config", default=None)
     parser.add_argument("--checkpoint", default=None,
                         help="omit to run the data checks only")
     args = parser.parse_args()
+
+    if args.all:
+        sys.exit(verify_all())
+    if not args.config:
+        parser.error("pass --all, or --config with an optional --checkpoint")
 
     cfg = resolve(load_config(args.config), ROOT)
     dcfg, mcfg = cfg["data"], cfg["model"]
