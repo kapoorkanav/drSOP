@@ -1,0 +1,82 @@
+# FUSION WITHOUT THE COMORBIDITY TOKEN: metadata reduced to age, diabetes duration, sex and
+# insulin use. Everything else matches configs/balanced_3class_lora.yaml exactly.
+#
+# Hypothesis: the comorbidity token is the noisiest of the five. It is the only one that
+# compresses many facts -- a 15-way multi-hot built from free text -- through a single
+# Linear(15 -> 128) into one position, while each other field gets a token to itself. Free-text
+# tokenisation also means the vocabulary absorbs whatever spellings and variants the data
+# happens to contain.
+#
+# `model.meta_encoder.use_comorbidity: false` is the only change, so the metadata encoder goes
+# from 6 sequence positions (cls + 2 numeric + 2 categorical + comorbidity) to 5, and the
+# comorbidity projection and its missing embedding do not exist. The dataloader still supplies
+# the comorbidity tensors; the encoder never reads them.
+#
+# Read the result against two cautions, both recorded here on purpose:
+#
+#   1. This is the sixth architecture scored on the same 541 BRSET test images. Picking variants
+#      by their test score fits the test set's noise. Treat any gain under ~1.5 points as
+#      unmeasured rather than real.
+#   2. The whole metadata path is worth roughly 1.3 balanced-accuracy points (in the negative
+#      direction, vs configs/balanced_3class_imageonly_proj512_lora.yaml). Removing one of five
+#      tokens should move things by a fraction of that -- below this project's single-run
+#      variance. Seed repeats are what would make this measurable.
+data:
+  raw_labels_csv: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/labels_brset.csv
+  images_dir: /media/DATA/users/shared/file/a-brazilian-multilabel-ophthalmological-dataset-brset-1.0.1/fundus_photos
+  # Reuses the balanced cohort's existing splits -- nothing to regenerate.
+  processed_dir: data/processed_balanced
+  image_size: 224
+  label_col: DR_ICDR              # ICDR severity grade (0-4), merged below
+  # Same mapping as configs/balanced_3class_lora.yaml, so the two are directly comparable.
+  #   0 = no DR | 1 = mid (old grades 1-2, monitor) | 2 = severe (old 3-4, refer)
+  label_map: {0: 0, 1: 1, 2: 1, 3: 2, 4: 2}
+  numeric_fields: [patient_age, diabetes_time_y]
+  categorical_fields: [patient_sex, insuline]
+  # Still read: MetadataProcessor builds the comorbidity tensors for every batch, and the
+  # completeness tier and prep artifacts are shared with the other balanced-cohort configs.
+  # The model is what ignores them, via meta_encoder.use_comorbidity below.
+  comorbidity_field: comorbidities
+  comorbidity_vocab_size: 15
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true  # ignored when use_lora is true -- LoRA always keeps the base frozen
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.1
+  proj_dim: 512
+  meta_encoder:
+    d_model: 128
+    n_layers: 2
+    n_heads: 4
+    dropout: 0.1
+    use_comorbidity: false   # <-- the only difference from configs/balanced_3class_lora.yaml
+  gate:
+    n_layers: 1
+    n_heads: 4
+    dropout: 0.1
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 3  # 0=none, 1=mid (old grades 1-2), 2=severe (old grades 3-4)
+
+train:
+  batch_size: 8          # LoRA backprops through the whole backbone; 32 OOMs on this GPU
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/exp1_balanced_3class_nocomorbid_lora   # separate from every other run
+  seed: 42
+  early_stopping_patience: 10

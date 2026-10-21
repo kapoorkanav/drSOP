@@ -292,6 +292,7 @@ REGISTRY = [
     ("configs/balanced_3class_imageonly_proj512_lora.yaml",
      "runs/exp1_balanced_3class_imageonly_proj512_lora"),
     ("configs/balanced_3class_imageonly_lora.yaml", "runs/exp1_balanced_3class_imageonly_lora"),
+    ("configs/balanced_3class_nocomorbid_lora.yaml", "runs/exp1_balanced_3class_nocomorbid_lora"),
     ("configs/balanced_lora.yaml", "runs/exp1_balanced_lora"),
     ("configs/balanced_missgate_lora.yaml", "runs/exp1_balanced_missgate_lora"),
     ("configs/legacy_lora.yaml", "runs/exp1_legacy_lora"),

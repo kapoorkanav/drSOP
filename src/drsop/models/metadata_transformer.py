@@ -13,10 +13,17 @@ class MetadataEncoder(nn.Module):
 
     def __init__(self, n_numeric: int, categorical_cardinalities: list, n_comorbidities: int,
                  proj_dim: int, d_model: int = 128, n_layers: int = 2, n_heads: int = 4,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, use_comorbidity: bool = True):
         super().__init__()
         self.n_numeric = n_numeric
         self.n_categorical = len(categorical_cardinalities)
+        # use_comorbidity=False drops the comorbidity token entirely: no projection, no missing
+        # embedding, and one fewer position in the sequence. It is the only token that compresses
+        # many facts (a 15-way multi-hot) through a single linear into one position, where every
+        # other field gets a token to itself -- so it is the natural one to test as a noise
+        # source. The forward signature is unchanged either way, so the dataloader still supplies
+        # the comorbidity tensors and this module simply never reads them.
+        self.use_comorbidity = use_comorbidity
 
         # one linear projection per numeric field (each scalar -> d_model token)
         self.numeric_proj = nn.ModuleList([nn.Linear(1, d_model) for _ in range(n_numeric)])
@@ -26,14 +33,16 @@ class MetadataEncoder(nn.Module):
         self.categorical_emb = nn.ModuleList(
             [nn.Embedding(card, d_model) for card in categorical_cardinalities]
         )
-        self.comorbidity_proj = nn.Linear(n_comorbidities, d_model)
-        self.comorbidity_missing_emb = nn.Parameter(torch.zeros(1, d_model))
-        nn.init.trunc_normal_(self.comorbidity_missing_emb, std=0.02)
+        if use_comorbidity:
+            self.comorbidity_proj = nn.Linear(n_comorbidities, d_model)
+            self.comorbidity_missing_emb = nn.Parameter(torch.zeros(1, d_model))
+            nn.init.trunc_normal_(self.comorbidity_missing_emb, std=0.02)
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.trunc_normal_(self.cls_token, std=0.02)
 
-        n_tokens = 1 + n_numeric + self.n_categorical + 1  # cls + numeric + categorical + comorbidity
+        # cls + numeric + categorical (+ comorbidity, when enabled)
+        n_tokens = 1 + n_numeric + self.n_categorical + (1 if use_comorbidity else 0)
         self.pos_emb = nn.Parameter(torch.zeros(1, n_tokens, d_model))
         nn.init.trunc_normal_(self.pos_emb, std=0.02)
 
@@ -58,11 +67,12 @@ class MetadataEncoder(nn.Module):
         for i in range(self.n_categorical):
             tokens.append(self.categorical_emb[i](categorical[:, i]).unsqueeze(1))
 
-        comorbid_tok = self.comorbidity_proj(comorbidity)
-        comorbid_miss_mask = comorbidity_missing.bool().unsqueeze(-1)
-        comorbid_miss_tok = self.comorbidity_missing_emb.expand(batch, -1)
-        comorbid_tok = torch.where(comorbid_miss_mask, comorbid_miss_tok, comorbid_tok)
-        tokens.append(comorbid_tok.unsqueeze(1))
+        if self.use_comorbidity:
+            comorbid_tok = self.comorbidity_proj(comorbidity)
+            comorbid_miss_mask = comorbidity_missing.bool().unsqueeze(-1)
+            comorbid_miss_tok = self.comorbidity_missing_emb.expand(batch, -1)
+            comorbid_tok = torch.where(comorbid_miss_mask, comorbid_miss_tok, comorbid_tok)
+            tokens.append(comorbid_tok.unsqueeze(1))
 
         x = torch.cat(tokens, dim=1) + self.pos_emb
         x = self.encoder(x)

@@ -34,8 +34,12 @@ class DRFusionModel(nn.Module):
         # Copied, not mutated: the caller's cfg dict also gets saved into checkpoints.
         gate_cfg = dict(gate_cfg)
         self.use_missingness_token = gate_cfg.pop("use_missingness_token", False)
-        # one flag per numeric field, one per categorical field, one for comorbidities
-        n_missing_flags = (n_numeric + len(categorical_cardinalities) + 1
+        # One flag per numeric field, one per categorical field, plus one for comorbidities when
+        # that token exists at all -- meta_cfg's use_comorbidity can switch it off, and the flag
+        # vector has to match what forward() actually concatenates.
+        self.use_comorbidity = meta_cfg.get("use_comorbidity", True)
+        n_missing_flags = (n_numeric + len(categorical_cardinalities)
+                            + (1 if self.use_comorbidity else 0)
                             if self.use_missingness_token else 0)
         self.gate = GateTransformer(dim=proj_dim, n_missing_flags=n_missing_flags, **gate_cfg)
         self.head = MLPHead(in_dim=proj_dim, num_classes=num_classes, **head_cfg)
@@ -48,11 +52,10 @@ class DRFusionModel(nn.Module):
         )
         missing_flags = None
         if self.use_missingness_token:
-            missing_flags = torch.cat([
-                batch["numeric_missing"],
-                batch["categorical_missing"],
-                batch["comorbidity_missing"].unsqueeze(-1),
-            ], dim=-1)
+            parts = [batch["numeric_missing"], batch["categorical_missing"]]
+            if self.use_comorbidity:
+                parts.append(batch["comorbidity_missing"].unsqueeze(-1))
+            missing_flags = torch.cat(parts, dim=-1)
         alpha = self.gate(image_emb, meta_emb, missing_flags)
         fused = alpha * image_emb + (1 - alpha) * meta_emb
         logits = self.head(fused)
