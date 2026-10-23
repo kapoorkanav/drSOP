@@ -42,8 +42,22 @@ from drsop.metrics import compute_metrics  # noqa: E402
 from drsop.models.factory import build_model  # noqa: E402
 
 
-def group_report(emit, name: str, sub: pd.DataFrame, label_col: str, n_classes: int) -> dict:
-    """Metrics for one completeness group, each against its own baseline."""
+CLASS_NAMES_3 = ["none", "mid", "severe"]
+
+
+def class_names(n_classes: int) -> list:
+    return CLASS_NAMES_3 if n_classes == 3 else [f"g{i}" for i in range(n_classes)]
+
+
+def group_report(emit, name: str, sub: pd.DataFrame, label_col: str, n_classes: int,
+                 matrix: bool = False) -> dict:
+    """Metrics for one completeness group, each against its own baseline.
+
+    matrix=True also prints the group's confusion matrix with raw counts, so nothing has to be
+    reconstructed from percentages -- and so the off-diagonal is visible. Where a missed case
+    went is clinically different: true-mid predicted none is a missed referral, true-mid
+    predicted severe is an over-referral.
+    """
     if len(sub) == 0:
         emit(f"  {name:<22} (empty)")
         return {}
@@ -68,9 +82,31 @@ def group_report(emit, name: str, sub: pd.DataFrame, label_col: str, n_classes: 
     emit(f"  {name:<22} n={cm.sum():>4}  acc {acc * 100:5.1f}% (base {baseline * 100:4.1f}%)  "
          f"bal {np.nanmean(recalls) * 100:5.1f}%  recall[{recall_str}]  "
          f"sens {sens * 100:5.1f}%  missed {missed}/{diseased}")
+
+    if matrix:
+        names = class_names(n_classes)
+        emit("")
+        emit(f"    confusion, {name} (rows=true, cols=predicted):")
+        # Backslash kept out of the f-string expression: that is a syntax error before 3.12.
+        corner = "true\\pred"
+        emit("      " + corner.ljust(10) + "".join(f"{n:>9}" for n in names)
+             + f"{'n':>7}{'recall':>9}")
+        for i, n in enumerate(names):
+            row = "      " + f"{n:<10}" + "".join(f"{cm[i, j]:>9}" for j in range(n_classes))
+            row += f"{support[i]:>7}"
+            row += f"{recalls[i] * 100:>8.1f}%" if not np.isnan(recalls[i]) else f"{'--':>9}"
+            emit(row)
+        emit("      " + f"{'predicted n':<10}" + "".join(f"{cm[:, j].sum():>9}"
+                                                          for j in range(n_classes)))
+        if n_classes == 3:
+            emit(f"      mid called none (missed referral):   {cm[1, 0]}/{support[1]}")
+            emit(f"      mid called severe (over-referral):   {cm[1, 2]}/{support[1]}")
+            emit(f"      severe called none (worst error):    {cm[2, 0]}/{support[2]}")
+        emit("")
+
     return {"n": int(cm.sum()), "acc": float(acc), "baseline": float(baseline),
             "balanced": float(np.nanmean(recalls)), "sens": float(sens),
-            "support": support.tolist()}
+            "support": support.tolist(), "cm": cm.tolist()}
 
 
 def main():
@@ -157,9 +193,9 @@ def main():
             emit("  no completeness_tier column -- rerun the prep script")
             break
         results[tier] = group_report(
-            emit, tier, df[df["completeness_tier"] == tier], label_col, n_classes)
-    emit("")
-    results["ALL"] = group_report(emit, "ALL (pooled)", df, label_col, n_classes)
+            emit, tier, df[df["completeness_tier"] == tier], label_col, n_classes,
+            matrix=True)
+    results["ALL"] = group_report(emit, "ALL (pooled)", df, label_col, n_classes, matrix=True)
 
     emit("")
     emit("=" * 118)
