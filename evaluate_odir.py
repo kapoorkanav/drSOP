@@ -27,7 +27,7 @@ from train_odir import build_odir_model, load_codes  # noqa: E402
 
 
 def predict(model, ds, device, num_workers: int):
-    loader = DataLoader(ds, batch_size=32, shuffle=False, num_workers=num_workers)
+    loader = DataLoader(ds, batch_size=16, shuffle=False, num_workers=num_workers)
     probs, trues = [], []
     with torch.no_grad():
         for batch in tqdm(loader, desc="predicting", leave=False):
@@ -75,7 +75,7 @@ def main():
     codes = load_codes(processed_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = build_odir_model(mcfg, len(codes)).to(device)
+    model = build_odir_model(mcfg, len(codes), dcfg["image_size"]).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt["model"], strict=False)  # frozen backbone isn't in the ckpt
     model.eval()

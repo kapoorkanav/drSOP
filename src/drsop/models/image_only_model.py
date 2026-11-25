@@ -32,7 +32,8 @@ class ImageOnlyModel(nn.Module):
     when alpha = 1.
     """
 
-    def __init__(self, retfound_cfg: dict, head_cfg: dict, proj_dim, num_classes: int):
+    def __init__(self, retfound_cfg: dict, head_cfg: dict, proj_dim, num_classes: int,
+                 img_size: int = 224):
         super().__init__()
         lora_cfg = retfound_cfg.get("lora", {})
         self.image_encoder = RetfoundEncoder(
@@ -45,6 +46,7 @@ class ImageOnlyModel(nn.Module):
             lora_r=lora_cfg.get("r", 8),
             lora_alpha=lora_cfg.get("alpha", 16),
             lora_dropout=lora_cfg.get("dropout", 0.1),
+            img_size=img_size,
         )
         self.head = MLPHead(in_dim=self.image_encoder.out_dim, num_classes=num_classes,
                             **head_cfg)

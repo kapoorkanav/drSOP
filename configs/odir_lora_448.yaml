@@ -1,0 +1,51 @@
+# Same as odir_lora.yaml, but the model sees 448x448 images instead of 224x224.
+# Motivation: the 224 run's DR head plateaued at ~0.79-0.80 AUC (on train as well as val, so it's
+# not overfitting -- the signal isn't there). Early DR is microaneurysms / small haemorrhages a few
+# pixels wide; shrinking the 512x512 preprocessed images to 224 blurs most of that away.
+#
+# Same processed_dir (identical train/val/test split -- no need to rerun prepare_data_odir.py),
+# own output_dir, so the 224 run in runs/odir_lora/ is never touched.
+#
+# RETFound was pretrained at 224; RetfoundEncoder interpolates its position embeddings to the
+# 28x28 patch grid at load time. 4x the tokens means much more GPU memory and ~4-5x slower
+# epochs, hence batch 4 with 2-step gradient accumulation (effective batch 8, same as 224).
+# If it still runs out of memory: batch_size 2, grad_accum_steps 4.
+data:
+  raw_csv: /media/DATA/users/user2/odir/full_df.csv
+  images_dir: /media/DATA/users/user2/odir/preprocessed_images
+  processed_dir: data/processed_odir
+  image_size: 448
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true  # ignored when use_lora is true -- LoRA always keeps the base frozen
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.1
+  image_only: true
+  proj_dim: null
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 4   # D, G, C, A
+
+train:
+  batch_size: 4
+  grad_accum_steps: 2
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/odir_lora_448
+  seed: 42
+  early_stopping_patience: 10

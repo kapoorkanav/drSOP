@@ -31,18 +31,28 @@ def load_codes(processed_dir: str) -> list:
         return json.load(f)
 
 
-def build_odir_model(mcfg: dict, n_diseases: int) -> ImageOnlyModel:
+def build_odir_model(mcfg: dict, n_diseases: int, img_size: int = 224) -> ImageOnlyModel:
+    # img_size must match data.image_size: the ViT's patch grid / position embeddings are
+    # built for exactly that size. Callers pass data.image_size so the two can't drift apart.
     return ImageOnlyModel(retfound_cfg=mcfg, head_cfg=mcfg["head"],
-                          proj_dim=mcfg.get("proj_dim"), num_classes=n_diseases)
+                          proj_dim=mcfg.get("proj_dim"), num_classes=n_diseases,
+                          img_size=img_size)
 
 
-def run_epoch(model, loader, device, criterion, codes, optimizer=None, scaler=None, desc=""):
+def run_epoch(model, loader, device, criterion, codes, optimizer=None, scaler=None, desc="",
+              accum_steps: int = 1):
+    # accum_steps > 1: gradient accumulation -- sum gradients over that many small batches
+    # before one optimizer step, so a high-resolution run that only fits a batch of 4 in GPU
+    # memory still takes steps of the same effective size (4 x 2 = 8) as the 224 run.
+    # accum_steps=1 is exactly the original one-step-per-batch behaviour.
     train_mode = optimizer is not None
     model.train(train_mode)
     total_loss, all_true, all_prob = 0.0, [], []
+    if train_mode:
+        optimizer.zero_grad(set_to_none=True)
 
     pbar = tqdm(loader, desc=desc, leave=False)
-    for batch in pbar:
+    for step, batch in enumerate(pbar):
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         labels = batch.pop("label")
 
@@ -51,14 +61,18 @@ def run_epoch(model, loader, device, criterion, codes, optimizer=None, scaler=No
             loss = criterion(logits.float(), labels)
 
         if train_mode:
-            optimizer.zero_grad(set_to_none=True)
+            scaled = loss / accum_steps
             if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
+                scaler.scale(scaled).backward()
             else:
-                loss.backward()
-                optimizer.step()
+                scaled.backward()
+            if (step + 1) % accum_steps == 0 or (step + 1) == len(loader):
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
 
         total_loss += loss.item() * labels.size(0)
         all_true.extend(labels.cpu().tolist())
@@ -99,7 +113,10 @@ def main():
     train_loader, train_ds = make_loader("train", train=True)
     val_loader, _ = make_loader("val", train=False)
 
-    model = build_odir_model(mcfg, len(codes)).to(device)
+    model = build_odir_model(mcfg, len(codes), dcfg["image_size"]).to(device)
+    accum_steps = tcfg.get("grad_accum_steps", 1)
+    print(f"image size {dcfg['image_size']}, batch {tcfg['batch_size']} x accum {accum_steps}"
+          f" = effective batch {tcfg['batch_size'] * accum_steps}")
     criterion = build_multilabel_loss(tcfg["class_weighted_loss"], train_ds.labels(), device)
     if tcfg["class_weighted_loss"]:
         pw = criterion.pos_weight.tolist()
@@ -124,7 +141,7 @@ def main():
 
     for epoch in range(start_epoch, tcfg["epochs"]):
         tr = run_epoch(model, train_loader, device, criterion, codes, optimizer, scaler,
-                       desc=f"epoch {epoch} train")
+                       desc=f"epoch {epoch} train", accum_steps=accum_steps)
         va = run_epoch(model, val_loader, device, criterion, codes, desc=f"epoch {epoch} val")
         print(f"[epoch {epoch}] train: {summary(tr, codes)}")
         print(f"[epoch {epoch}]   val: {summary(va, codes)}")

@@ -15,7 +15,8 @@ class RetfoundEncoder(nn.Module):
 
     def __init__(self, repo_path: str, checkpoint_path: str, arch: str,
                  proj_dim: int, freeze: bool = True, use_lora: bool = False,
-                 lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.1):
+                 lora_r: int = 8, lora_alpha: int = 16, lora_dropout: float = 0.1,
+                 img_size: int = 224):
         super().__init__()
         repo_path = str(Path(repo_path).resolve())
         if repo_path not in sys.path:
@@ -23,7 +24,12 @@ class RetfoundEncoder(nn.Module):
         import models_vit  # noqa: E402  (provided by the vendored RETFound_MAE repo)
         from util.pos_embed import interpolate_pos_embed  # noqa: E402
 
+        # img_size: RETFound was pretrained at 224 (14x14 patches). Any other size builds the
+        # ViT with a bigger patch grid, and interpolate_pos_embed below resizes the pretrained
+        # position embeddings to fit it. 224 is the ViT's own default, so it's a no-op for
+        # every pre-existing config and checkpoint.
         self.backbone = models_vit.__dict__[arch](
+            img_size=img_size,
             num_classes=0,  # no classification head; we want the pooled embedding
             drop_path_rate=0.0,
             global_pool=True,
