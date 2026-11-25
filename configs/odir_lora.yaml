@@ -1,0 +1,42 @@
+data:
+  # VM paths. raw_csv is full_df.csv; images_dir is the matching preprocessed_images/ folder
+  # (already cropped/resized, and exactly the 6,392 images full_df.csv has labels for -- the
+  # archive's separate "Testing Images" folder has no labels at all, so it isn't used).
+  raw_csv: /media/DATA/users/user2/odir/full_df.csv
+  images_dir: /media/DATA/users/user2/odir/preprocessed_images
+  processed_dir: data/processed_odir
+  image_size: 224
+  split:
+    val_frac: 0.15
+    test_frac: 0.15
+    seed: 42
+
+model:
+  retfound_repo: third_party/RETFound_MAE
+  retfound_checkpoint: weights/RETFound_cfp_weights.pth
+  retfound_arch: RETFound_mae
+  freeze_retfound: true  # ignored when use_lora is true -- LoRA always keeps the base frozen
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.1
+  image_only: true   # no metadata, no gate -- see src/drsop/models/image_only_model.py
+  proj_dim: null      # null -> backbone's native 1024-d embedding goes straight to the head
+  head:
+    hidden_dims: [256, 64]
+    dropout: 0.3
+  num_classes: 4   # D, G, C, A -- independent binary heads (multi-label, not mutually exclusive)
+
+train:
+  # LoRA backprops through the whole ViT -- 32 OOMs on the ~20GB GPU, 8 is what worked on BRSET.
+  batch_size: 8
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  class_weighted_loss: true
+  num_workers: 8
+  amp: true
+  output_dir: runs/odir_lora
+  seed: 42
+  early_stopping_patience: 10

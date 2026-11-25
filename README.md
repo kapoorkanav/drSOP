@@ -172,3 +172,27 @@ hypothesis this architecture was built to test, and it held even as the image br
   few training examples (54/108/19 respectively) — LoRA fine-tuning may or may not help this
   specifically (it adapts image features, not class balance), so also worth considering targeted
   augmentation or oversampling for those grades if LoRA alone doesn't move the needle.
+
+## ODIR-5K: multi-disease detection (separate task)
+
+RETFound -> 4 independent yes/no heads — diabetic retinopathy (D), glaucoma (G), cataract (C),
+AMD (A) — image only, one eye per prediction. Reuses `ImageOnlyModel` and the RETFound/LoRA
+infrastructure unchanged; only the data pipeline, loss (BCE with per-disease `pos_weight`) and
+metrics (per-disease AUC/F1/sensitivity/specificity) are new.
+
+Labels are derived **per eye** from each eye's own `Left-/Right-Diagnostic Keywords` text, not
+from the official N/D/G/C/A/H/M/O columns — those are per patient and identical for both eyes even
+when the eyes differ. The keyword->disease mapping is an explicit set from the real vocabulary
+(see `scripts/prepare_data_odir.py`); "suspected" findings count as positive.
+
+```bash
+# data on the VM: /media/DATA/users/user2/odir/{full_df.csv, preprocessed_images/}
+python scripts/prepare_data_odir.py --config configs/odir_lora.yaml
+python train_odir.py --config configs/odir_lora.yaml          # early-stops on val mean AUC
+python evaluate_odir.py --config configs/odir_lora.yaml --checkpoint runs/odir_lora/best.pt
+```
+
+`evaluate_odir.py` reports each disease at the default 0.5 cut-off and at a per-disease threshold
+tuned for F1 on the validation set (then applied unchanged to test) — 0.5 is usually badly placed
+for diseases present in only ~4-5% of eyes. `configs/odir_frozen.yaml` is the frozen-backbone
+variant.

@@ -1,10 +1,9 @@
 data:
-  # Local paths for now (this Mac) -- update to wherever the ODIR archive lands on the VM
-  # before training for real. raw_csv is full_df.csv; images_dir is the matching
-  # preprocessed_images/ folder (already cropped/resized, and is exactly the 6,392 images
-  # full_df.csv has labels for -- the separate "Testing Images" folder has no labels at all).
-  raw_csv: /Users/kanavkapoor/Downloads/archive/full_df.csv
-  images_dir: /Users/kanavkapoor/Downloads/archive/preprocessed_images
+  # VM paths. raw_csv is full_df.csv; images_dir is the matching preprocessed_images/ folder
+  # (already cropped/resized, and exactly the 6,392 images full_df.csv has labels for -- the
+  # archive's separate "Testing Images" folder has no labels at all, so it isn't used).
+  raw_csv: /media/DATA/users/user2/odir/full_df.csv
+  images_dir: /media/DATA/users/user2/odir/preprocessed_images
   processed_dir: data/processed_odir
   image_size: 224
   split:
